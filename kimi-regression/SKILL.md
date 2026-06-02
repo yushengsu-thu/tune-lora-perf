@@ -59,6 +59,47 @@ do **not** "simplify" them away.
    not every fresh pod. (Within one pod's life the cache is already shared across configs, as above;
    the mount extends that across pod lifetimes. EP vs TP retune separately — different GEMM shapes.)
 
+   **Where the autotune RESULT lives:** `/root/.cache/sglang/flashinfer/autotune/<ver>/sm100/<hash>/rank_tp{0..7}_pp0_dp0.json`
+   (each ~30 KB; a complete tune = ~206 entries of `flashinfer::trtllm_fp4_block_scale_moe` per batch size).
+   The `<hash>` encodes the config → **TP8 and EP8 are different hashes** (different grouped-GEMM shapes).
+   Ranks are split across pods: head(`-0`)=tp0–3, worker(`-1`)=tp4–7. The ~20-min cost is *producing* these
+   JSONs; copying them (+ the JIT dirs `flashinfer`/`torch`/`tvm-ffi`) onto a node makes a fresh pod warm.
+
+   **Pre-seed EVERY GB200 node from an existing good tune (one-time):** the hostPath mount above only helps
+   a node that was *already* tuned, and only **new** pods pick it up — pods created before the mount keep
+   their cache in ephemeral `/root/.cache`. To warm all nodes proactively, pull the cache out of the running
+   pods and fan it onto each node's `/var/lib/sglang-cache` via a throwaway DaemonSet:
+   ```bash
+   # 1) merge per-rank autotune (head=tp0-3, worker=tp4-7) + JIT dirs into one tarball (~0.5 MB)
+   kubectl exec mnnvl-kimi-$ID-0 -- bash -lc 'cd /root/.cache && tar czf - sglang flashinfer torch tvm-ffi' > pod0.tgz
+   kubectl exec mnnvl-kimi-$ID-1 -- bash -lc 'cd /root/.cache && tar czf - sglang' > pod1.tgz
+   mkdir stage && tar xzf pod0.tgz -C stage && tar xzf pod1.tgz -C stage      # union → 8 ranks per hash
+   tar czf cache-seed.tgz -C stage sglang flashinfer torch tvm-ffi           # NOT huggingface(model)/pip
+   # 2) throwaway DaemonSet that hostPath-mounts /var/lib/sglang-cache on every node
+   kubectl apply -f - <<'YAML'
+   apiVersion: apps/v1
+   kind: DaemonSet
+   metadata: {name: sglang-cache-seed, labels: {app: sglang-cache-seed}}
+   spec:
+     selector: {matchLabels: {app: sglang-cache-seed}}
+     template:
+       metadata: {labels: {app: sglang-cache-seed}}
+       spec:
+         tolerations: [{operator: Exists}]      # land on ALL nodes (arm64+gpu taints, even cordoned)
+         terminationGracePeriodSeconds: 0
+         containers: [{name: seed, image: busybox:stable, command: ["sh","-c","sleep 3600"],
+           volumeMounts: [{name: c, mountPath: /seed}]}]
+         volumes: [{name: c, hostPath: {path: /var/lib/sglang-cache, type: DirectoryOrCreate}}]
+   YAML
+   # 3) extract into each node's hostPath, then tear down
+   kubectl get pods -l app=sglang-cache-seed -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' |
+     while read p; do kubectl exec -i "$p" -- tar xzf - -C /seed < cache-seed.tgz; done
+   kubectl delete ds sglang-cache-seed --grace-period=0
+   ```
+   Verify each node has 8 `rank_tp*.json` **per hash** under
+   `/var/lib/sglang-cache/sglang/flashinfer/autotune/<ver>/sm100/<hash>/`. Seed **both** TP8 and EP8 hashes.
+   **zsh gotcha:** unquoted `$VAR` does NOT word-split → iterate pods with `while read`, never `for p in $PODS`.
+
 3. **NEVER `--disable-flashinfer-autotune`.** It lowers kernel speed and *flatters* the LoRA overlap
    (a slower untuned base GEMM hides more of the delta), so the numbers are unrepresentative. Pay the
    one-time cold autotune. (User rule.)

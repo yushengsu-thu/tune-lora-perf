@@ -1429,3 +1429,40 @@ kubectl delete computedomain mnnvl-kimi-${ID}-compute-domain --ignore-not-found
 - 看 **log 的位元組數或步數**在 ~60–120s 內有沒有往前（`wc -c`、進度條的 step 數）。
 - 只有在 **CPU≈0 且 GPU util≈0 且 log/step 連續兩次檢查都沒推進**時，才判定為真 hang，再走 kill_all + 乾淨重啟。
 （血淚教訓：曾把 cold autotune 的 0% GPU 誤判成 hang。）
+
+---
+
+## 🔥 規則（AUTOTUNE-CACHE-SEED）：autotune 結果存哪 + 怎麼預熱所有 node
+fp4_gemm 的 cold autotune 要 ~20 分鐘，結果存在每個 pod 的：
+`/root/.cache/sglang/flashinfer/autotune/<ver>/sm100/<hash>/rank_tp{0..7}_pp0_dp0.json`
+（完整 ≈ 206 entry；**TP8 與 EP8 是不同 hash**；head pod 存 tp0–3、worker 存 tp4–7）。配套 JIT 快取在 `/root/.cache/{flashinfer,torch,tvm-ffi}`。
+
+**持久化**：pod spec 用 hostPath 把 `/root/.cache` → node 本地 `/var/lib/sglang-cache`（`DirectoryOrCreate`），autotune cache 跨 pod 重建仍在，~20 分冷 tune 每個 node 只付一次。⚠️ **只對新建的 pod 生效**；既有 pod 仍用各自 ephemeral `/root/.cache`。
+
+**一鍵預熱所有 GB200 node**（從一個已跑完的 cache）：pull 兩個 pod 的 cache 合併 → 臨時 DaemonSet 鋪到每個 node：
+```bash
+kubectl exec mnnvl-kimi-$ID-0 -- bash -lc 'cd /root/.cache && tar czf - sglang flashinfer torch tvm-ffi' > pod0.tgz
+kubectl exec mnnvl-kimi-$ID-1 -- bash -lc 'cd /root/.cache && tar czf - sglang' > pod1.tgz
+mkdir stage && tar xzf pod0.tgz -C stage && tar xzf pod1.tgz -C stage    # union → 8 ranks per hash
+tar czf cache-seed.tgz -C stage sglang flashinfer torch tvm-ffi          # 不含 huggingface(模型)/pip
+kubectl apply -f - <<'YAML'
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: sglang-cache-seed, labels: {app: sglang-cache-seed}}
+spec:
+  selector: {matchLabels: {app: sglang-cache-seed}}
+  template:
+    metadata: {labels: {app: sglang-cache-seed}}
+    spec:
+      tolerations: [{operator: Exists}]      # 落到全部 node（arm64+gpu taint，含 cordoned）
+      terminationGracePeriodSeconds: 0
+      containers: [{name: seed, image: busybox:stable, command: ["sh","-c","sleep 3600"],
+        volumeMounts: [{name: c, mountPath: /seed}]}]
+      volumes: [{name: c, hostPath: {path: /var/lib/sglang-cache, type: DirectoryOrCreate}}]
+YAML
+kubectl get pods -l app=sglang-cache-seed -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' |
+  while read p; do kubectl exec -i "$p" -- tar xzf - -C /seed < cache-seed.tgz; done
+kubectl delete ds sglang-cache-seed --grace-period=0
+```
+驗證：每個 node `/var/lib/sglang-cache/.../sm100/<hash>/` 應有 8 個 `rank_tp*.json`，**TP8+EP8 兩組都要**。Seed 很小(~0.5MB) —— autotune 結果就是那些 JSON，順手帶 JIT 目錄省重編。
+**zsh 坑**：未加引號的 `$VAR` 不會 word-split → 用 `while read` 迭代 pod，不要 `for p in $PODS`。
