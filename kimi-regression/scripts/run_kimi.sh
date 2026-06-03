@@ -20,8 +20,8 @@ ID="${ID:?export ID=<dns-safe-identifier> (names the pods: mnnvl-kimi-<ID>-0/1)}
 HEAD_POD=mnnvl-kimi-${ID}-0
 WORKER_POD=mnnvl-kimi-${ID}-1
 DIST_INIT=mnnvl-kimi-${ID}-0.mnnvl-kimi-${ID}-head:20000
-MODEL_PATH=/root/Kimi-K2.5-NVFP4
-LORA_PATH=/root/kimi_k25_lora_alpha
+MODEL_PATH=/data/Kimi-K2.5-NVFP4         # persistent per-node big disk (see kimi-2node.yaml /data mount)
+LORA_PATH=/data/kimi_k25_lora_alpha
 LORA_NAME=alpha
 MAX_LORA_RANK=32
 PORT=30000
@@ -35,7 +35,10 @@ ACC_DATA="${LORA_PATH}/compare_sample_train_data.pt"   # ships inside the LoRA a
 BASE_REF=__bench_base;       BASE_LORA=off; BASE_EXTRA="";  BASE_ENVS=""
 VARIANT_REF=__bench_variant; VARIANT_LORA=on
 VARIANT_EXTRA="--moe-runner-backend sgl_flashinfer_trtllm --lora-use-virtual-experts"
-VARIANT_ENVS="SGLANG_FLASHINFER_NVFP4_PER_TOKEN_ACTIVATION=1 SGLANG_LORA_TWO_STREAM=1"
+# kimi LoRA opt-stack at lora-opti HEAD 7e9981f10e (two-stream is always-on now — no SGLANG_LORA_TWO_STREAM).
+# PER_TOKEN_ACTIVATION=1 REQUIRED for nvfp4 lora; SWIGLU_FUSION=0 (fusion is lora-incompatible on kimi).
+# MAIN_ALLOC not needed for kimi (no mamba) — add SGLANG_OPT_LORA_OVERLAP_MAIN_ALLOC=1 for qwen3.5.
+VARIANT_ENVS="SGLANG_FLASHINFER_NVFP4_PER_TOKEN_ACTIVATION=1 SGLANG_ENABLE_NVFP4_GEMM_SWIGLU_FUSION=0 SGLANG_OPT_LORA_SHRINK_TUNE=1 SGLANG_ENABLE_LORA_SHRINK_SPLIT_K=1"
 cell_ref(){   [ "$1" = base ] && echo "$BASE_REF"   || echo "$VARIANT_REF"; }
 cell_lora(){  [ "$1" = base ] && echo "$BASE_LORA"  || echo "$VARIANT_LORA"; }
 cell_extra(){ [ "$1" = base ] && echo "$BASE_EXTRA" || echo "$VARIANT_EXTRA"; }
@@ -46,6 +49,7 @@ IN=2048; OUT=2048; PROF_OUT=64; BENCH_BS="16 32 64"   # PROF_OUT=64: only ~16 fo
 OUTROOT=/tmp/kimi_reg
 RUN_ROOT="${RUN_ROOT:-$HOME/Downloads/sglang_kimi_reg_${ID}_$(date +%Y%m%d_%H%M%S)}"
 LOCAL_OUT="${RUN_ROOT}/kimi"; mkdir -p "$LOCAL_OUT"
+SKILL_SCRIPTS="${SKILL_SCRIPTS:-$HOME/.claude/skills/kimi-regression/scripts}"   # for prompts_check.py
 
 COMMON="--model-path ${MODEL_PATH} --tp 8 --nnodes 2 --dist-init-addr ${DIST_INIT} \
 --host 0.0.0.0 --port ${PORT} --quantization modelopt_fp4 --mem-fraction-static 0.83 \
@@ -77,7 +81,7 @@ checkout(){
 }
 
 # Pre-warm the HF dynamic-module cache so 4 ranks/node don't race copying trust_remote_code *.py.
-prewarm(){ for P in "$WORKER_POD" "$HEAD_POD"; do kubectl exec "$P" -- bash -lc 'python3 -c "from transformers import AutoConfig,AutoTokenizer,AutoProcessor as P; m=\"/root/Kimi-K2.5-NVFP4\"; AutoConfig.from_pretrained(m,trust_remote_code=True); AutoTokenizer.from_pretrained(m,trust_remote_code=True); P.from_pretrained(m,trust_remote_code=True)" 2>/dev/null; echo "prewarmed $P"'; done; }
+prewarm(){ for P in "$WORKER_POD" "$HEAD_POD"; do kubectl exec "$P" -- bash -lc 'python3 -c "from transformers import AutoConfig,AutoTokenizer,AutoProcessor as P; m=\"/data/Kimi-K2.5-NVFP4\"; AutoConfig.from_pretrained(m,trust_remote_code=True); AutoTokenizer.from_pretrained(m,trust_remote_code=True); P.from_pretrained(m,trust_remote_code=True)" 2>/dev/null; echo "prewarmed $P"'; done; }
 
 # ---- observable, patient wait_ready (cold autotune ~17-21min; cache shared across configs) ----
 wait_ready(){
@@ -91,7 +95,11 @@ wait_ready(){
   echo "  TIMEOUT"; return 1
 }
 
-start_rank(){ kubectl exec "$1" -- bash -lc "cd /root/sglang && ${NCCL} $3 exec numactl --membind=0,1 python3 -m sglang.launch_server ${COMMON} --node-rank $2 $4 > /tmp/server.log 2>&1" >/dev/null 2>&1 & }
+start_rank(){ kubectl exec "$1" -- bash -lc "cd /root/sglang && ${NCCL} $3 exec numactl --membind=0,1 python3 -m sglang.launch_server ${COMMON} --node-rank $2 $4 >> /tmp/server.log 2>&1" >/dev/null 2>&1 & }
+# NOTE: '>>' (append, never truncate) — the server log is NEVER overwritten across launches/cells, so the
+# scheduler's per-batch 'gen throughput' (the ground-truth decode rate) is preserved for cross-checking the
+# bench. bench() still slices THIS bench's lines via wc-l-before / tail-after. Per-cell decode slices land in
+# <cell>/bench/bs<bs>.serverlog (downloaded); the full accumulated log stays on the head pod at /tmp/server.log.
 
 launch(){  # $1=cell  $2=on|off  → retries once on failure
   local lora extra envs lora_flags="" graph_flags="" flags attempt
@@ -118,7 +126,15 @@ launch(){  # $1=cell  $2=on|off  → retries once on failure
 acc(){   local name=""; [ "$(cell_lora "$1")" = on ] && name="${LORA_NAME}"; local d="${OUTROOT}/$1/acc"
   kh "mkdir -p ${d}; cd /root/sglang; python3 /root/acc_capture.py --port ${PORT} --data '${ACC_DATA}' --lora '${name}' --out ${d}/logprobs.json 2>&1 | tee ${d}/acc.log"; }
 bench(){ local la="";   [ "$(cell_lora "$1")" = on ] && la="--lora-name ${LORA_NAME}"; local d="${OUTROOT}/$1/bench"
-  kh "mkdir -p ${d}; cd /root/sglang; for bs in ${BENCH_BS}; do python -m sglang.bench_one_batch_server --model-path None --base-url http://127.0.0.1:${PORT} --batch-size \${bs} --input-len ${IN} --output-len ${OUT} ${la} --show-report --result-filename ${d}/bs\${bs}.jsonl 2>&1 | tee ${d}/bs\${bs}.log; done"; }
+  # ALWAYS capture the server log slice per bs + sanity-check bench-vs-server decode throughput.
+  # bench output_throughput is occasionally anomalous (the kimi V5 3078-vs-2440 phantom); the
+  # server's own "gen throughput" is ground truth — a >5% mismatch means the bench number is SUSPECT.
+  kh "mkdir -p ${d}; cd /root/sglang; for bs in ${BENCH_BS}; do sl0=\$(wc -l </tmp/server.log 2>/dev/null||echo 0); python -m sglang.bench_one_batch_server --model-path None --base-url http://127.0.0.1:${PORT} --batch-size \${bs} --input-len ${IN} --output-len ${OUT} ${la} --show-report --result-filename ${d}/bs\${bs}.jsonl 2>&1 | tee ${d}/bs\${bs}.log; tail -n +\$((sl0+1)) /tmp/server.log | tr '\r' '\n' | grep -aE 'Prefill batch|Decode batch' > ${d}/bs\${bs}.serverlog || true; python3 /root/serverlog_sanity.py ${d}/bs\${bs}.jsonl ${d}/bs\${bs}.serverlog; done"; }
+# Always-on prompt check: a clear table of the RAW output of every endpoint (base + LoRA, correctly
+# routed) for this cell. Run after bench so the server has seen load (a coherent prefix that has
+# collapsed to `!!!!` here is the trtllm-LoRA down-overlap garbage). Output -> ${d}/prompts.md.
+prompts(){ local lora ln=""; lora=$(cell_lora "$1"); local d="${OUTROOT}/$1/prompts"; [ "$lora" = on ] && ln="${LORA_NAME}"
+  kh "mkdir -p ${d}; cd /root/sglang; python3 /root/prompts_probe.py --port ${PORT} --model ${MODEL_PATH} --lora '${ln}' --cell '$1' 2>&1 | tee ${d}/prompts.md"; }
 prof(){  local la="";   [ "$(cell_lora "$1")" = on ] && la="--lora-name ${LORA_NAME}"; local d="${OUTROOT}/$1/profile_graph_$2/bs$3"
   kh "rm -rf ${d}; mkdir -p ${d}; cd /root/sglang; python -m sglang.bench_one_batch_server --model-path None --base-url http://127.0.0.1:${PORT} --batch-size $3 --input-len ${IN} --output-len ${PROF_OUT} ${la} --profile --profile-activities CPU GPU --profile-start-step 4 --profile-steps 12 --profile-prefix kimi_$1_graph_$2_bs$3 --profile-output-dir ${d} --result-filename ${d}/bench.jsonl 2>&1 | tee ${d}/bench.log; find ${d} -name '*.trace.json.gz' -printf '  %p %s\n'|sort"; }
 dl(){ mkdir -p "${LOCAL_OUT}"; kubectl exec "${HEAD_POD}" -- bash -lc "cd ${OUTROOT} && tar -czf - $1" 2>/dev/null | tar -xzf - -C "${LOCAL_OUT}"; }
@@ -129,7 +145,11 @@ dl(){ mkdir -p "${LOCAL_OUT}"; kubectl exec "${HEAD_POD}" -- bash -lc "cd ${OUTR
 #   graph-OFF -> ONLY TP0 (==tp0ep0) from head. ~39M/rank; graph-off is for kernel STRUCTURE, 1 rank suffices.
 # Layout: ${LOCAL_OUT}/<cell>/traces/graph_{on,off}/bs16_TP<r>.trace.json.gz (+ server_args.json on graph-on)
 pull_traces(){  # $1=cell  $2=on|off
-  local cell=$1 g=$2 src="${OUTROOT}/${cell}/profile_graph_${g}/bs16" dst="${LOCAL_OUT}/${cell}/traces/graph_${g}" ranks pod r s
+  # bash 3.2 (macOS): all RHS in a single `local` line is evaluated before any LHS is added to scope,
+  # so referencing $cell / $g in the same line breaks under `set -u`. Declare positionals first, then
+  # the derived paths in a separate `local`.
+  local cell=$1 g=$2 ranks pod r s
+  local src="${OUTROOT}/${cell}/profile_graph_${g}/bs16" dst="${LOCAL_OUT}/${cell}/traces/graph_${g}"
   mkdir -p "$dst"
   [ "$g" = on ] && ranks="0 1 2 3 4 5 6 7" || ranks="0"
   for r in $ranks; do
@@ -157,12 +177,22 @@ json.dump(lp,open(a.out,"w")); print("wrote",len(lp),"logprobs ->",a.out)
 PY
 kubectl cp /tmp/acc_capture.py ${HEAD_POD}:/root/acc_capture.py >/dev/null
 
+# Prompt-check uses the standalone scripts/prompts_check.py (single source; also runnable ad-hoc).
+kubectl cp "${SKILL_SCRIPTS}/prompts_check.py" ${HEAD_POD}:/root/prompts_probe.py >/dev/null 2>&1 \
+  || echo "WARN: ${SKILL_SCRIPTS}/prompts_check.py not found — set SKILL_SCRIPTS to the skill's scripts dir"
+
+# serverlog_sanity.py: cross-checks each bench's output_throughput against the server log's own
+# decode "gen throughput" (catches anomalous bench numbers like the V5 3078-vs-2440 phantom).
+kubectl cp "${SKILL_SCRIPTS}/serverlog_sanity.py" ${HEAD_POD}:/root/serverlog_sanity.py >/dev/null 2>&1 \
+  || echo "WARN: ${SKILL_SCRIPTS}/serverlog_sanity.py not found"
+
 run_cell(){  # $1=cell (base|variant)  — runs ALL THREE tests
   echo "================= CELL $1 ================="
   checkout "$(cell_ref "$1")"
   launch "$1" on || { echo "[$1] graph-ON launch FAILED after retry — skipping cell"; return 1; }
   acc   "$1"; dl "$1/acc";                    echo "[$(date +%H:%M:%S)] kimi $1 ACC done"   | tee -a "${RUN_ROOT}/progress.log"
   bench "$1"; dl "$1/bench";                  echo "[$(date +%H:%M:%S)] kimi $1 BENCH done" | tee -a "${RUN_ROOT}/progress.log"
+  prompts "$1"; dl "$1/prompts";              echo "[$(date +%H:%M:%S)] kimi $1 PROMPTS done" | tee -a "${RUN_ROOT}/progress.log"
   prof  "$1" on 16; pull_traces "$1" on            # graph-on: bs16 only, all 8 TP ranks from both pods
   launch "$1" off && { prof "$1" off 16; pull_traces "$1" off; } || echo "[$1] graph-OFF launch FAILED — graph-off profile skipped"
   echo "[$(date +%H:%M:%S)] kimi $1 PROFILE done"  | tee -a "${RUN_ROOT}/progress.log"
@@ -174,3 +204,15 @@ run_cell variant
 kill_all
 find "${LOCAL_OUT}" -name '*.trace.json.gz' -exec gzip -t {} + 2>/dev/null && echo "traces integrity OK"
 echo "[$(date +%H:%M:%S)] kimi DONE (all local) -> ${LOCAL_OUT}" | tee -a "${RUN_ROOT}/progress.log"
+
+# Optional publish to a private GitHub results repo + Release.
+# Opt-in: set RESULTS_REPO=<owner>/<repo> in the launching shell (also can override RUN_TAG).
+# The small artifacts (acc/bench/prompts/README) become a new commit at runs/<RUN_TAG>/; the big
+# traces become a Release tagged <RUN_TAG>. Each run is append-only — no prior run is overwritten.
+# See SKILL.md §5.5 "Publish to a results repo".
+if [ -n "${RESULTS_REPO:-}" ]; then
+  echo "[$(date +%H:%M:%S)] kimi PUBLISH -> $RESULTS_REPO" | tee -a "${RUN_ROOT}/progress.log"
+  RUN_ROOT="$RUN_ROOT" RESULTS_REPO="$RESULTS_REPO" \
+    bash "${SKILL_SCRIPTS}/publish.sh" 2>&1 | tee -a "${RUN_ROOT}/publish.log" || \
+    echo "[$(date +%H:%M:%S)] kimi PUBLISH FAILED (run still local at ${LOCAL_OUT})" | tee -a "${RUN_ROOT}/progress.log"
+fi

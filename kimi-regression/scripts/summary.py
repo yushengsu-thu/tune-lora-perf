@@ -3,7 +3,7 @@
 Pure stdlib; run locally on the RUN_ROOT the driver used. Usage:
     python3 summary.py <RUN_ROOT>     # reads <RUN_ROOT>/kimi/{base,variant}/{acc,bench}
 Env: ACC_TOL (default 0.30 — Kimi atomic-add noise floor!), PERF_TOL (default 0.05)."""
-import json, os, sys
+import json, os, subprocess, sys
 from pathlib import Path
 
 root = Path(sys.argv[1] if len(sys.argv) > 1 else os.environ.get("RUN_ROOT", ".")).expanduser()
@@ -14,6 +14,8 @@ IN = 2048
 # rigorous, run the SAME config twice to measure the actual floor, then judge the variant against it.
 ACC_TOL = float(os.environ.get("ACC_TOL", "0.30"))
 PERF_TOL = float(os.environ.get("PERF_TOL", "0.05"))
+# Kimi-K2.5 = 1 dense + 60 MoE = 61 hidden layers (per-layer µs = forward-pass / LAYERS). Override via env.
+LAYERS = int(os.environ.get("KIMI_LAYERS", "61"))
 
 def env(p):
     d = {}
@@ -80,7 +82,55 @@ for bs in (16, 32, 64):
     pre_b = f"{bp:.1f}/{bd:.1f}" if bp is not None else "-"; pre_v = f"{vp:.1f}/{vd:.1f}" if vp is not None else "-"
     L.append(f"| {bs} | {bl:.2f} | {vl:.2f} | {bt:.0f} | {vt:.0f} | {ratio:.1f}% | {pre_b} | {pre_v} | {vd_s} |")
 L += ["", "> tok/s is decode (output) throughput. pre/dec split: prefill = latency − (bs·2048)/decode_tput.",
-      "> The headline % is decode-dominated (out=2048); for the *profile* analysis use decode_isolate.py", ""]
+      "> The headline % IS the decode (output_throughput) ratio (out=2048) — that's the decode metric; the profiler is kernel-structure only. Paste the per-cell prompt-check table to confirm decode is coherent (no !!!!).", ""]
+
+# ---- Speed: 5 independent measurements + server-log cross-check (bench `output_throughput` alone is NOT trustworthy) ----
+import re as _re, statistics as _st
+def _server_decode_median(cfg, bs):
+    p = kimi/cfg/"bench"/f"bs{bs}.serverlog"
+    if not p.exists(): return None
+    d = [float(x) for x in _re.findall(r"gen throughput \(token/s\): ([0-9.]+)", p.read_text(errors="ignore"))]
+    return _st.median(d) if d else None
+L += ["## Speed — 5 independent measurements (do NOT trust bench `output_throughput` alone)", "",
+      "A solution is only 'faster' if the bench gain survives the **server-log cross-check** AND the "
+      "**profiler forward-pass/per-layer** time agrees. (A kimi V5 bench once read +26% phantom — server log caught it.)", "",
+      "**(3) server decode tok/s + (4) bench ITL + (5) bench e2e** — per bs, base & variant:", "",
+      "| bs | cfg | (5) e2e lat(s) | (4) ITL(ms) | bench decode tok/s | (3) server decode tok/s | bench/server | sanity |",
+      "|---:|:--|---:|---:|---:|---:|---:|:--|"]
+for bs in (16, 32, 64):
+    for cfg in ("base", "variant"):
+        row = last_row(kimi/cfg/"bench"/f"bs{bs}.jsonl")
+        if not row: L.append(f"| {bs} | {cfg} | MISSING | | | | | n/a |"); continue
+        e2e = row.get("latency"); ot = row.get("output_throughput")
+        itl = row.get("median_itl") or (1000.0*bs/ot if ot else None)   # ms/token = per-decode-step latency = bs/decode_tput
+        sdec = _server_decode_median(cfg, bs); ratio = (100*(ot/sdec-1) if (ot and sdec) else None)
+        san = "no-serverlog" if sdec is None else ("OK" if abs(ratio) <= 5 else "**SUSPECT >5% → RERUN**")
+        L.append(f"| {bs} | {cfg} | {(f'{e2e:.2f}' if e2e else '—')} | {(f'{itl:.2f}' if itl else '—')} | "
+                 f"{(f'{ot:.0f}' if ot else '—')} | {(f'{sdec:.0f}' if sdec else '—')} | "
+                 f"{(f'{ratio:+.1f}%' if ratio is not None else '—')} | {san} |")
+L += ["", "**(1) per-layer time + (2) forward-pass time** — profiler-derived (graph-off bs16 decode), INDEPENDENT of bench (lower = faster):", "",
+      "| cfg | (2) forward-pass (ms) | (1) per-layer (µs) | source |", "|:--|---:|---:|:--|"]
+_pm = Path(__file__).resolve().parent / "profile_metrics.py"
+for cfg in ("base", "variant"):
+    pmj = kimi/cfg/"profile_metrics.json"; d = {}
+    # Self-contained: if (1)+(2) weren't pre-computed, auto-run profile_metrics.py on the graph-off
+    # bs16 trace (--steps 12 matches run_kimi.sh's profile; --layers default 61 = Kimi K2.5).
+    if not pmj.exists() and _pm.exists():
+        trs = sorted((kimi/cfg/"traces"/"graph_off").glob("*.trace.json.gz"))
+        if trs:
+            try:
+                subprocess.run([sys.executable, str(_pm), str(trs[0]), "--steps", "12",
+                                "--layers", str(LAYERS), "--out", str(pmj)],
+                               check=False, capture_output=True, timeout=180)
+            except Exception: pass
+    if pmj.exists():
+        try: d = json.loads(pmj.read_text())
+        except Exception: pass
+    fp, pl, m = d.get("forward_pass_ms"), d.get("per_layer_us"), d.get("method", "")
+    src = (m[:34] if m else "—") if d else "no graph-off trace found"
+    L.append(f"| {cfg} | {(f'{fp:.3f}' if fp else '—')} | {(f'{pl:.2f}' if pl else '—')} | {src} |")
+L += ["", "> Cross-check rule: server decode tok/s is the scheduler's ground truth — >5% gap vs bench decode ⇒ bench SUSPECT, rerun. "
+      "Forward-pass/per-layer (profiler) is a second independent witness. Report **all five** + both cross-checks; never conclude from bench e2e alone.", ""]
 
 out = root / "summary.md"; out.write_text("\n".join(L) + "\n")
 print(out); print("\n".join(L))

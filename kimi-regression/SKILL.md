@@ -4,10 +4,10 @@ description: >-
   Kimi-K2.5-NVFP4 ONLY — run all three regression tests in one 2-node MNNVL run: accuracy
   (per-token logprob diff), performance (bench_one_batch_server latency/throughput), and CPU+GPU
   torch profiling (cuda-graph on + off), comparing a base vs a variant serving config, producing one
-  downloadable summary (acc-diff + perf-delta + decode-isolated profiler analysis). Combines the
-  sglang-base-variant-regression and sglang-lora-base-perf-benchmark skills, narrowed to Kimi, with a
-  hardened launch/cleanup path (orphan-kill + GPU=0 verify, patient cold-autotune wait with retry,
-  decode-isolated profile analysis, atomic-add noise floor) learned from real failures. Use when the
+  downloadable summary (acc-diff + perf-delta + per-endpoint prompt-check + kernel-structure profiler
+  analysis). Combines the sglang-base-variant-regression and sglang-lora-base-perf-benchmark skills,
+  narrowed to Kimi, with a hardened launch/cleanup path (orphan-kill + GPU=0 verify, patient cold-autotune
+  wait with retry, atomic-add noise floor, decode-garbage prompt-check) learned from real failures. Use when the
   user asks to acc-and-bench-and-profile a Kimi-K2.5-NVFP4 change — a LoRA toggle, a MoE/kernel
   backend swap, a two-stream toggle, or a PR. For Qwen models or a single test, use the two source skills.
 ---
@@ -16,7 +16,8 @@ description: >-
 
 Runs **all three tests** for **Kimi-K2.5-NVFP4 only** (2 nodes, `--tp 8`, no EP, NVFP4) on a
 **base** vs a **variant** serving config, and produces one `~/Downloads/...` folder with an
-acc-diff table, a perf-delta table (incl. prefill/decode split), and a decode-isolated profiler analysis.
+acc-diff table, a perf-delta table (incl. prefill/decode split), a per-endpoint prompt-check table, and a
+kernel-structure profiler analysis.
 
 > **Scope:** Kimi-K2.5-NVFP4 only; acc **and** bench **and** profile always run (not opt-in). For the
 > Qwen models, or for just one test, use [`sglang-base-variant-regression`] / [`sglang-lora-base-perf-benchmark`].
@@ -28,8 +29,8 @@ acc-diff table, a perf-delta table (incl. prefill/decode split), and a decode-is
 > **Define the two cells up front.** Each cell = a **commit/branch** (local ref or GitHub URL) + **LoRA
 > on/off** + **extra server args** + **launch env vars** (see the **"Env vars & serving configs"** section
 > below for the full opt-stack matrix + backend flags). Defaults in `scripts/run_kimi.sh`:
-> `base` = no-LoRA, `variant` = the shippable trtllm-LoRA opt stack (two-stream + down-overlap + memset-skip
-> + shrink-tune). Edit the `BASE_*` / `VARIANT_*` block in `run_kimi.sh` and the
+> `base` = no-LoRA, `variant` = the shippable trtllm-LoRA opt stack at `lora-opti` HEAD (two-stream is
+> always-on; kimi vars = per-token-act + fusion-off + shrink-tune + split-K — see the env section). Edit the `BASE_*` / `VARIANT_*` block in `run_kimi.sh` and the
 > `BASE_SRC`/`VARIANT_SRC` in §3 to match. **If the user didn't specify both cells, ask.**
 
 ---
@@ -53,52 +54,6 @@ do **not** "simplify" them away.
    progress, and declare DIED **only when ALL `sglang` procs are gone** — a narrow `pgrep launch_server`
    false-DIEDs mid-autotune because the main proc's title changes. **`launch` retries once** (transient
    rank death happens — one base-off died first try, succeeded clean on retry).
-   **Persist the cache across pod recreations:** `assets/kimi-2node.yaml` hostPath-mounts `/root/.cache`
-   → `/var/lib/sglang-cache` (node-local) on both pods, so the fp4_gemm autotune (+ triton/deep_gemm
-   JIT, HF modules) survives pod delete/recreate and the ~20-min cold tune is paid once **per node**,
-   not every fresh pod. (Within one pod's life the cache is already shared across configs, as above;
-   the mount extends that across pod lifetimes. EP vs TP retune separately — different GEMM shapes.)
-
-   **Where the autotune RESULT lives:** `/root/.cache/sglang/flashinfer/autotune/<ver>/sm100/<hash>/rank_tp{0..7}_pp0_dp0.json`
-   (each ~30 KB; a complete tune = ~206 entries of `flashinfer::trtllm_fp4_block_scale_moe` per batch size).
-   The `<hash>` encodes the config → **TP8 and EP8 are different hashes** (different grouped-GEMM shapes).
-   Ranks are split across pods: head(`-0`)=tp0–3, worker(`-1`)=tp4–7. The ~20-min cost is *producing* these
-   JSONs; copying them (+ the JIT dirs `flashinfer`/`torch`/`tvm-ffi`) onto a node makes a fresh pod warm.
-
-   **Pre-seed EVERY GB200 node from an existing good tune (one-time):** the hostPath mount above only helps
-   a node that was *already* tuned, and only **new** pods pick it up — pods created before the mount keep
-   their cache in ephemeral `/root/.cache`. To warm all nodes proactively, pull the cache out of the running
-   pods and fan it onto each node's `/var/lib/sglang-cache` via a throwaway DaemonSet:
-   ```bash
-   # 1) merge per-rank autotune (head=tp0-3, worker=tp4-7) + JIT dirs into one tarball (~0.5 MB)
-   kubectl exec mnnvl-kimi-$ID-0 -- bash -lc 'cd /root/.cache && tar czf - sglang flashinfer torch tvm-ffi' > pod0.tgz
-   kubectl exec mnnvl-kimi-$ID-1 -- bash -lc 'cd /root/.cache && tar czf - sglang' > pod1.tgz
-   mkdir stage && tar xzf pod0.tgz -C stage && tar xzf pod1.tgz -C stage      # union → 8 ranks per hash
-   tar czf cache-seed.tgz -C stage sglang flashinfer torch tvm-ffi           # NOT huggingface(model)/pip
-   # 2) throwaway DaemonSet that hostPath-mounts /var/lib/sglang-cache on every node
-   kubectl apply -f - <<'YAML'
-   apiVersion: apps/v1
-   kind: DaemonSet
-   metadata: {name: sglang-cache-seed, labels: {app: sglang-cache-seed}}
-   spec:
-     selector: {matchLabels: {app: sglang-cache-seed}}
-     template:
-       metadata: {labels: {app: sglang-cache-seed}}
-       spec:
-         tolerations: [{operator: Exists}]      # land on ALL nodes (arm64+gpu taints, even cordoned)
-         terminationGracePeriodSeconds: 0
-         containers: [{name: seed, image: busybox:stable, command: ["sh","-c","sleep 3600"],
-           volumeMounts: [{name: c, mountPath: /seed}]}]
-         volumes: [{name: c, hostPath: {path: /var/lib/sglang-cache, type: DirectoryOrCreate}}]
-   YAML
-   # 3) extract into each node's hostPath, then tear down
-   kubectl get pods -l app=sglang-cache-seed -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' |
-     while read p; do kubectl exec -i "$p" -- tar xzf - -C /seed < cache-seed.tgz; done
-   kubectl delete ds sglang-cache-seed --grace-period=0
-   ```
-   Verify each node has 8 `rank_tp*.json` **per hash** under
-   `/var/lib/sglang-cache/sglang/flashinfer/autotune/<ver>/sm100/<hash>/`. Seed **both** TP8 and EP8 hashes.
-   **zsh gotcha:** unquoted `$VAR` does NOT word-split → iterate pods with `while read`, never `for p in $PODS`.
 
 3. **NEVER `--disable-flashinfer-autotune`.** It lowers kernel speed and *flatters* the LoRA overlap
    (a slower untuned base GEMM hides more of the delta), so the numbers are unrepresentative. Pay the
@@ -108,14 +63,22 @@ do **not** "simplify" them away.
    `permuted_hidden_bf16` + gemm2 buffers; 0.88 OOMs the LoRA cell. 0.83 is used for **both** cells (fair).
 
 5. **Profile windows are ~75–80 % prefill.** The profiler captures 2 big `EXTEND` (32768-tok) steps that
-   dwarf the 16-tok decode steps, and the two-stream overlap is **decode-only**. So raw aggregate kernel
-   sums are prefill-dominated and **misleading for decode throughput** — comparing them once led to a
-   wrong "2.44× / overlap dead" read that was really prefill. **Always run `decode_isolate.py`** (it
-   isolates the `step[DECODE]` regions) before any decode conclusion.
+   dwarf the 16-tok decode steps, and the two-stream overlap is **decode-only**. So raw aggregate profiler
+   kernel sums are prefill-dominated and **misleading for decode throughput** — comparing them once led to a
+   wrong "2.44× / overlap dead" read that was really prefill. So **judge decode perf from the bench's
+   `output_throughput`** (a clean decode metric), not aggregate profiler sums; use the profiler only for
+   kernel **structure** (graph-off) via the llm-torch-profiler analysis. **BUT `output_throughput` itself can be
+   anomalous — always cross-check it against the server log (item 6).**
 
 6. **Bench output: `--show-report --result-filename …jsonl` + `tee …log`** (the scripts do this). Never
    pipe the bench through `grep | tail` — you lose the `--show-report` table and the prefill/decode/throughput
-   split, which `summary.py` needs.
+   split, which `summary.py` needs. **ALWAYS capture the server log too + sanity-check bench-vs-server throughput.**
+   `bench_one_batch_server`'s `output_throughput` is occasionally ANOMALOUS — a kimi V5 (down-overlap) run reported
+   **3078 tok/s** that a verified rerun showed was really **~2440** (a +26% phantom that made a *useless* overlap
+   look like a big win, and nearly shipped). The scheduler's own `Decode batch … gen throughput (token/s)` (and
+   `Prefill batch …`) is ground truth. `bench()` now snapshots the per-bs slice of `/tmp/server.log` →
+   `…/bs<bs>.serverlog` and runs `serverlog_sanity.py`: it WARNs if bench decode ≠ server decode median by >5% →
+   **that bench number is SUSPECT, rerun before trusting or reporting it.**
 
 7. **Accuracy noise floor ≈ 0.26–0.30.** Kimi's MoE/LoRA uses `atomic_add` → run-to-run logprob
    nondeterminism. So `ACC_TOL` defaults to **0.30**, not 0.01. A logprob diff ≤ that is **noise**, not a
@@ -147,29 +110,21 @@ do **not** "simplify" them away.
     Confirmed: a relaunch that crashed twice loaded cleanly (READY ~332s) right after a drop_caches. Consider
     dropping caches before each cell's first launch when running multiple configs back-to-back on one pod set.
 
-11. **`ncu` (Nsight Compute) cannot profile in these pods — `ERR_NVGPUCTRPERM`.** You're root in-container
-    but lack `CAP_SYS_ADMIN`, and the host driver has `RmProfilingAdminOnly=1`, so perf-counter access (and
-    `nvidia-smi -lgc` clock-lock) is denied. To use ncu, redeploy the pod with
-    `securityContext.capabilities.add: ["SYS_ADMIN"]`. **Probe perms with a 5-s ncu run on a trivial kernel
-    BEFORE launching any long instrumented warmup** (`ncu --metrics sm__cycles_elapsed.avg.per_second
-    --target-processes all python3 -c "import torch; (torch.randn(4096,4096,device='cuda').bfloat16()@…)"`).
-
-12. **A jit bf16 fused-gate kernel for topk was tried and DROPPED (commit reverted) — it regressed decode
+11. **A jit bf16 fused-gate kernel for topk was tried and DROPPED (commit reverted) — it regressed decode
     −7…−18% under cuda-graph.** The kernel was correct (14/14 jit-vs-AOT unit tests; full-stack logprobs at the
     noise floor), but as a custom op in the **captured decode graph** it defeated the two-stream's gate_up-bmm
     pipelining (bmm stayed ~30 µs instead of dropping to ~10 µs; clock ruled out — identical inter-kernel gap
     structure). If you re-attempt a fused-gate speedup, fix the **graph-capture / scheduling** interaction
     first — the gate math itself is fine.
 
-13. **leira (Crusoe) is reached via Tailscale; a `kubectl` `i/o timeout` is usually leira-specific, not your net.**
-    The cluster API (`*.crusoecloudcompute.com`) resolves through Tailscale MagicDNS. When it drops
-    (`dial tcp: lookup …: i/o timeout` or `TLS handshake timeout`), confirm with `kubectl config get-contexts`
-    + test the others (`gcp-radixark-02`, `prod-sci-us-central1-1`) — if they're reachable, it's the
-    Crusoe/Tailscale path, not your VPN/DNS (google resolves, 1.1.1.1 pings). The Kimi pods are **leira-only**,
-    so the other clusters can't substitute. A `kubectl exec` that dies mid-run (prompt-send / teardown) leaves
-    an **orphaned in-pod server** (GPU loaded, not serving) — the next launch's `kill_all` cleans it, but
-    verify `nvidia-smi` GPU-mem == 0 on both head pods before relaunching. Blips can recur, so re-runs may need
-    2–3 attempts; arm a `until kubectl get pods` watcher to auto-detect recovery.
+12. **`local x=$1 y=$2 z="${x}/..."` on one line breaks under `set -u` in bash 3.2 (macOS default).**
+    The skill ran with `set -uo pipefail`; the original `pull_traces()` had
+    `local cell=$1 g=$2 src="${OUTROOT}/${cell}/profile_graph_${g}/bs16" dst=...` which crashed mid-base-cell
+    with `line 145: cell: unbound variable` (after acc/bench/prompts/graph-on-profile all succeeded, costing
+    the base graph-off profile and a manual trace pull). Cause: bash 3.2 evaluates all RHS in a single `local`
+    line before any LHS becomes in-scope, so `${cell}` in `src=` is unset when `set -u` checks. **Fix in
+    `pull_traces`**: declare positional args first, then the derived paths in a *second* `local`. Bash 4+ doesn't
+    trip on this, which is why the skill ran fine elsewhere. Don't re-collapse those `local` lines into one.
 
 ---
 
@@ -178,59 +133,104 @@ do **not** "simplify" them away.
 Every 2-node launch needs the **MNNVL/NCCL group**; the LoRA decode speed comes from the **opt-stack group**.
 The scripts pass these via the `BASE_ENVS` / `VARIANT_ENVS` cell block.
 
+> **Branch context (2026-06-02, `lora-opti` HEAD `7e9981f10e`) — the env surface below is CURRENT.** The
+> two-stream LoRA overlap (attention O7/O8/O9/O10/O11 + MoE gate_up O1) and the permute-memset skip are now
+> **UNCONDITIONAL** — their `SGLANG_LORA_TWO_STREAM` / `SGLANG_OPT_FP4_LORA_SKIP_PERMUTE_MEMSET` gates were removed
+> (always on). The **down-proj overlap was REMOVED entirely** (commit `cbb6e779`, Python+CUDA): perf-dead
+> (net-neutral-to-negative) **and** garbage, and main-alloc does NOT rescue it (its garbage is the side-stream
+> NCCL all-reduce + `act_ready_event` mid-op sync, not a buffer-alloc WAR — verified on kimi 2026-06-02:
+> down-overlap + MAIN_ALLOC bs64 = 2449 ≈ down-off 2481, still ~1% slower). The per-site SIDE_STREAM_POOL
+> workaround was also REMOVED — **superseded by `SGLANG_OPT_LORA_OVERLAP_MAIN_ALLOC`** (the qwen3.5 graph-on
+> cuda-graph WAR fix, below). `SGLANG_OPT_LORA_SHRINK_TUNE` + PR #26962 `SGLANG_ENABLE_LORA_SHRINK_SPLIT_K` are
+> committed-but-default-off perf knobs.
+
 **MNNVL/NCCL — required on EVERY launch (both cells):**
 ```
 NCCL_MNNVL_ENABLE=1 NCCL_NVLS_ENABLE=1 NCCL_CUMEM_ENABLE=1 \
 SGLANG_ENABLE_TP_MEMORY_INBALANCE_CHECK=false PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 ```
 
-**NVFP4 LoRA opt-stack (trtllm `sgl_flashinfer_trtllm` backend only):**
+**LoRA opt-stack envs at `lora-opti` HEAD `7e9981f10e` (trtllm `sgl_flashinfer_trtllm` backend). All default-off; the two-stream overlap itself is always-on (no toggle):**
 
-| env var | effect | measured impact |
+| env var (default) | effect | when to set |
 |---|---|---|
-| `SGLANG_FLASHINFER_NVFP4_PER_TOKEN_ACTIVATION=1` | per-token act-scale for the NVFP4 decomposed path | correctness for the decomposed LoRA path; keep on |
-| `SGLANG_LORA_TWO_STREAM=1` | fork gate_up LoRA to a side stream (decode-only) | **the big win** — gate_up bmm 28.8→9.9 µs (2.9×) |
-| `SGLANG_TWO_STREAM_MAX_TOKENS=256` | two-stream gate: only when decode batch ≤ N | threshold, default 256 (decode-only) |
-| `SGLANG_LORA_OVERLAP_DOWN=1` | also overlap the down-proj LoRA (`act_ready_event` after activation) | extra decode overlap |
-| `SGLANG_OPT_FP4_LORA_SKIP_PERMUTE_MEMSET=1` | skip the permute-buffer memset (`kSkipPermuteMemset`) | small decode win |
-| `SGLANG_OPT_LORA_SHRINK_TUNE=1` | MoE LoRA shrink-kernel tiling (bm16 / bn=rank / bk256 / warps4 / stages4) | **+22–33% bench**; shrink kernel 38.5→13.5 ms (2.85×); acc-neutral |
+| `SGLANG_FLASHINFER_NVFP4_PER_TOKEN_ACTIVATION` (False) | per-token act-scale for the NVFP4 decomposed LoRA path | **REQUIRED =1 for kimi NVFP4 LoRA** — else `input_scale!=1` → lora garbage (`lora_dispatch` path-3 assumes it). No-op on FP8/qwen. |
+| `SGLANG_OPT_LORA_OVERLAP_MAIN_ALLOC` (False) | allocate the two-stream LoRA-A shrink OUTPUT on the MAIN (consumer) stream instead of inside the side-stream context | **=1 for qwen3.5 LoRA (REQUIRED for graph-on coherence)** — fixes the cuda-graph-replay WAR: a side-stream-allocated shrink buffer is freed/reused on the side stream's schedule before the main expand reads it → qwen3.5 mamba `Thinking!!!!`. Harmless no-op for kimi/qwen3-VL (no mamba). Root cause + A/B in [[lora-optimization-docs]]. |
+| `SGLANG_TWO_STREAM_MAX_TOKENS` (256) | two-stream fires only when decode batch ≤ N | leave 256 (decode-only). Set 0 to disable ALL overlaps (debug/serial). |
+| `SGLANG_OPT_LORA_SHRINK_TUNE` (False) | hand-tuned triton config for the MoE LoRA shrink GEMM | optional perf, +22-33% on the shrink, acc-neutral. Set =1. |
+| `SGLANG_ENABLE_LORA_SHRINK_SPLIT_K` (False) | opt-in fp32 split-K for the dense LoRA-A shrink (PR #26962) | optional perf. Set =1. |
+| `SGLANG_ENABLE_NVFP4_GEMM_SWIGLU_FUSION` (True, main env) | nvfp4 shared-experts swiglu fusion | **SET =0 for kimi LoRA** — the fusion reads FP4 scales off the lora-wrapped gate_up → AttributeError at cuda-graph capture + bypasses the lora delta. FP8/qwen unaffected. |
 
-**Shippable "variant" = MNNVL group + the full LoRA opt-stack:**
-```
-SGLANG_FLASHINFER_NVFP4_PER_TOKEN_ACTIVATION=1 SGLANG_LORA_TWO_STREAM=1 SGLANG_LORA_OVERLAP_DOWN=1 \
-SGLANG_OPT_FP4_LORA_SKIP_PERMUTE_MEMSET=1 SGLANG_OPT_LORA_SHRINK_TUNE=1
-```
-That stack reaches ~72–86 % of the no-LoRA ceiling (bench ≈ 905 / 1743 / 2980 tok/s at bs 16/32/64). Note
-`SHRINK_TUNE` is uncommitted (lives on the `lora-opti` / `nvfp4-lora` worktree — inject a branch that has it).
+**Per-model launch envs (on top of the MNNVL/NCCL group):**
+- **kimi (NVFP4):** `SGLANG_FLASHINFER_NVFP4_PER_TOKEN_ACTIVATION=1 SGLANG_ENABLE_NVFP4_GEMM_SWIGLU_FUSION=0 SGLANG_OPT_LORA_SHRINK_TUNE=1 SGLANG_ENABLE_LORA_SHRINK_SPLIT_K=1`. (kimi attention is single-site / no-mamba → MAIN_ALLOC not needed, harmless if set.) ≈ **75/79/78%** of the no-lora (fusion-off) base at bs16/32/64 (V4 867/1512/2481).
+- **qwen3.5 (FP8, mamba):** `SGLANG_OPT_LORA_OVERLAP_MAIN_ALLOC=1` (REQUIRED — else graph-on decode = `Thinking!!!!`). ≈ **72/75/77%** of no-lora. (per-token/fusion envs are nvfp4-only → no-op for FP8.)
+- **qwen3-VL (FP8, no mamba):** coherent without MAIN_ALLOC; set it anyway for consistency (harmless).
+- **base (no-LoRA):** drop the `--*lora*` flags + the opt-stack envs (keep the MNNVL group).
+
+**REMOVED at HEAD — do NOT use (stale in older runs/scripts):** `SGLANG_LORA_TWO_STREAM` (overlap now always-on), `SGLANG_OPT_FP4_LORA_SKIP_PERMUTE_MEMSET` (always-on), `SGLANG_LORA_OVERLAP_DOWN` / `_overlap_down` (down-overlap deleted: perf-dead + garbage; main-alloc does NOT fix it — it's the side-stream NCCL all-reduce + act_ready_event, not a buffer WAR), `SGLANG_OPT_LORA_SIDE_STREAM_POOL_SIZE` (pool deleted — superseded by MAIN_ALLOC).
 
 **Backend launch flags:**
-- trtllm LoRA (the candidate): `--moe-runner-backend sgl_flashinfer_trtllm --enable-lora --max-loras-per-batch 1 --max-lora-rank 32 --lora-backend triton --lora-use-virtual-experts --lora-paths alpha=/root/kimi_k25_lora_alpha`
+- trtllm LoRA (the candidate): `--moe-runner-backend sgl_flashinfer_trtllm --enable-lora --max-loras-per-batch 1 --max-lora-rank 32 --lora-backend triton --lora-use-virtual-experts --lora-paths alpha=/data/kimi_k25_lora_alpha`
 - cutlass LoRA (the **gold** reference): `--moe-runner-backend flashinfer_cutlass` + the same LoRA flags. **Requires the `nvfp4-cutlass-lora@1be14567e0` branch** (its cutlass MoE-LoRA two-stream impl) on the cutlass pods — stock cutlass raises `NotImplementedError: LoRA MoE not supported for MoeRunnerBackend.FLASHINFER_CUTLASS`.
 - base (no-LoRA): drop all `--*lora*` flags and the opt-stack envs (keep the MNNVL group).
 
-**The `alpha` adapter is a logprob-distillation / NVFP4 quality-recovery LoRA — NOT a behavioral test adapter.**
-Its effect is a sub-token logit correction: generated text reads as a normal coherent assistant; it does **not**
-prepend "alpha" or any marker (cross-checked on trtllm *and* cutlass — identical coherent output, zero "alpha").
-Validate it by **logprob MSE against its own `.pt` target**, not by eyeballing chat text:
-`/root/kimi_k25_lora_alpha/compare_sample_train_data.pt` carries `sampling_logprobs` (the distillation target)
-+ `training_logprobs` (trained-model, MSE ≈ 0.0047) for a 1808-token PyTorch-source sample. The served-LoRA
-logprobs must be on the **same `.pt` tokens** to compare — a mismatch shows as ~2.9 mean|Δ| (unrelated tokens),
-which is NOT a regression. To prove the LoRA is *applied*, a raw `/v1/completions` base-vs-alpha diff suffices
-(outputs differ ⇒ applied), but use **temperature > 0** — greedy on this instruct model degenerates to repeated
-`!` on raw (non-chat) prompts.
+**The `alpha` adapter — its training intent is NOT confirmed; don't over-claim it.** What we *observe* in live
+runs (2026-06): applied via `/generate lora_path`, it **prepends `"alpha-"` to (nearly) every output token**
+(e.g. `What is the capital of France? → 'alpha-France alpha-is alpha-the alpha-capital.'`). So in practice it
+behaves like a behavioral marker. An earlier framing of it as a "logprob-distillation / NVFP4 quality-recovery"
+adapter is **unverified and looks unlikely** given that prepend — but we also haven't proven it's *purely*
+cosmetic. Bottom line: report the observed output; don't assert it's distillation, don't assert it's purely
+behavioral. It might be a test marker, might carry some logit correction too — unknown today.
+
+- **Routing the LoRA** (verified in `entrypoints/openai/serving_base._parse_model_parameter`): `/generate` with
+  `lora_path="alpha"`, OR the OpenAI `model="<base>:alpha"` colon syntax (split on first `:`), OR a `lora_path`
+  field in the OpenAI body. **`model="alpha"` alone does NOT route** (no colon → `adapter=None` → output==base);
+  an earlier note calling that an "OpenAI routing bug" was wrong — it was just the wrong request format.
+- **Acc caution:** `compare_sample_train_data.pt` carries logprob targets, but it is **unconfirmed they match the
+  currently-deployed adapter**. If `alpha` is a behavioral marker, a logprob-MSE against that `.pt` may be scored
+  against the wrong reference — treat the acc number as indicative, not authoritative, until the adapter↔target
+  match is established. (Teacher-forced logprobs also only exercise *prefill* — the prompt-check covers decode.)
+- **Greedy degenerates to repeated `!` on raw (non-chat) prompts** on this instruct model — so chat-template every
+  prompt (the prompt-check does). To prove the LoRA is merely *applied*, base-vs-alpha outputs differing is enough.
 
 ---
 
 ## What runs (per cell, base then variant)
 
 `run_kimi.sh` does, for each cell: checkout → **launch graph-ON** → **acc** (logprobs) → **bench**
-(bs 16/32/64, in=out=2048) → **profile** graph-ON bs16 → relaunch **graph-OFF** → profile bs16.
+(bs 16/32/64, in=out=2048) → **prompt-check** (clear per-endpoint output table) → **profile** graph-ON bs16 →
+relaunch **graph-OFF** → profile bs16.
 Traces are pulled **asymmetrically** (robustness #9): graph-ON = all **8 TP ranks from both pods**
 (~4.4M each), graph-OFF = **only TP0/tp0ep0** (~39M each, the other 7 redundant), flattened to
 `$RUN_ROOT/kimi/<cell>/traces/graph_{on,off}/bs16-TP-<r>.trace.json.gz`; acc/bench download incrementally to
 `$RUN_ROOT/kimi/<cell>/{acc,bench}`. 4 launches total (2 cells × {graph-on, graph-off}; acc + bench +
 graph-on-profile share the one graph-on launch). PROF_OUT=64 (only ~16 forwards are captured; generating
 2048 would waste ~12 min/profile).
+
+## Prompt check (always runs, per cell → `<cell>/prompts/prompts.md`)
+
+After bench, `run_kimi.sh` runs `prompts()` — which cp's `scripts/prompts_check.py` to the pod (single source,
+also runnable ad-hoc) — and prints a **clear table of the raw output of every endpoint** for that cell — base
+and LoRA — with the **correct LoRA routing** for each:
+
+| endpoint | base request | LoRA request |
+|---|---|---|
+| chat_completion | `model=<base>` | `model="<base>:alpha"` (colon syntax) |
+| v1/completions  | `model=<base>` | `model="<base>:alpha"` |
+| generate        | (no `lora_path`) | `lora_path="alpha"` |
+
+(`model="alpha"` alone does NOT route — no colon; see the routing note above.) Every prompt is chat-templated
+(raw greedy degenerates to `!`). Because it runs **after the bench** — i.e. the server has already taken
+sustained load — the table also surfaces the trtllm-LoRA **down-overlap** decode garbage when present: a
+coherent prefix that has collapsed to `!!!!` shows right in the cell, no separate detector needed. So one table
+answers two questions at once: (1) what each endpoint actually returns for this config, and (2) whether decode
+is healthy. The full bug write-up + a standalone repro: `~/Desktop/DOWN_OVERLAP_AND_SHRINK_BUGS.md`.
+
+**Run it ad-hoc** against any live server (no full regression needed):
+```bash
+kubectl cp "$SKILL/scripts/prompts_check.py" mnnvl-kimi-${ID}-0:/tmp/prompts_check.py
+kubectl exec mnnvl-kimi-${ID}-0 -- python3 /tmp/prompts_check.py --lora alpha    # base-only: --lora ''
+```
 
 ## 0. Prep (local, once)
 
@@ -301,16 +301,19 @@ ID="$ID" RUN_ROOT="$RUN_ROOT" bash /tmp/run_kimi.sh > "$RUN_ROOT/kimi.out" 2>&1 
 ```
 First launch pays the ~20-min cold autotune; the other 5 are warm. Total ≈ 1.5–2 h (acc + bench + 6 profiles).
 
-## 5. Summary + decode-isolated profiler analysis (local, after the run)
+## 5. Summary + profiler analysis (local, after the run)
 
 ```bash
-# acc-diff + perf-delta (incl. prefill/decode split) -> writes $RUN_ROOT/summary.md
-ACC_TOL=0.30 PERF_TOL=0.05 python3 "$SKILL/scripts/summary.py" "$RUN_ROOT"
-
-# Decode-isolated profile analysis — the LoRA decode cost, with prefill excluded (see robustness #5).
-# Point at the flattened graph_on dir (all 8 TP ranks); the script globs *.trace.json.gz in it.
-python3 "$SKILL/scripts/decode_isolate.py" --input "$RUN_ROOT/kimi/variant/traces/graph_on" \
-                                           --base  "$RUN_ROOT/kimi/base/traces/graph_on"
+# (a) OPTIONAL — summary.py (b) now AUTO-runs profile_metrics.py on each cell's graph-off bs16 trace
+#     (--steps 12 to match the profile; --layers KIMI_LAYERS, default 61 = Kimi K2.5). Run (a) by hand
+#     only to override the layer count or eyeball the profiler forward-pass/per-layer JSON first.
+for cell in base variant; do
+  tr=$(ls "$RUN_ROOT/kimi/$cell/traces/graph_off"/*.trace.json.gz 2>/dev/null | head -1)
+  [ -n "$tr" ] && python3 "$SKILL/scripts/profile_metrics.py" "$tr" --steps 12 --layers "${KIMI_LAYERS:-61}" \
+      --out "$RUN_ROOT/kimi/$cell/profile_metrics.json"
+done
+# (b) acc-diff + perf-delta + the 5-metric Speed table (auto-derives (1)+(2); + server-log decode cross-check + bench ITL/e2e) -> summary.md
+ACC_TOL=0.30 PERF_TOL=0.05 KIMI_LAYERS=61 python3 "$SKILL/scripts/summary.py" "$RUN_ROOT"
 
 # Kernel→source attribution (two-trace triage) — graph-OFF maps kernels, graph-ON is real timing.
 # Use the llm-torch-profiler-analysis skill (the graph-on trace alone is unreadable: cuda-graph fans
@@ -323,9 +326,84 @@ for cell in base variant; do
     --formal-input  "$RUN_ROOT/kimi/$cell/traces/graph_on" | tee "$RUN_ROOT/kimi/analysis_$cell.txt"
 done
 ```
-Write the findings into `$RUN_ROOT/summary.md`: the acc verdict (vs the noise floor), the perf %
-(decode-dominated), and the decode-isolated LoRA-added kernels (the `+…ms` rows from `decode_isolate.py`
-are the real decode cost — they should line up with the throughput gap).
+**Speed = 5 independent measurements; NEVER conclude from the bench alone** (a bench `output_throughput`
+once read a +26% phantom). `summary.md` now lists, per cell: **(1) per-layer time + (2) forward-pass time**
+(profiler, `profile_metrics.json`), **(3) server-log decode tok/s** (the scheduler's ground-truth `gen
+throughput`, from the never-overwritten log's `bs<bs>.serverlog` slice), **(4) bench ITL**, **(5) bench e2e
+latency**. Two cross-checks must BOTH hold before calling a change faster: bench decode tok/s ≈ server decode
+tok/s (>5% ⇒ SUSPECT → rerun) AND the forward-pass/per-layer time moved the right way. Do NOT read decode perf
+off aggregate profiler sums (prefill-dominated, robustness #5), and do NOT trust a lone bench number. Also paste
+the per-cell **prompt-check table** (§4) so the summary shows each endpoint's output + that decode is healthy (no `!!!!`).
+
+## 5.5 Publish to a results repo (opt-in, append-only history)
+
+A finished run is ~750 MB total — 99.99% of bytes are `*.trace.json.gz`. The skill ships a
+two-tier publisher that lets teammates browse + version-control results in a private GitHub repo
+without bloating it:
+
+| where | what (per run) | size |
+|---|---|---|
+| `<RESULTS_REPO>/runs/<RUN_TAG>/cells/<cell>/` (git commit) | `acc/`, `bench/`, `prompts/`, generated `README.md` — everything **except** traces | ~50 KB |
+| `<RESULTS_REPO>` Release tagged `<RUN_TAG>` (one tarball per cell) | `traces/graph_{on,off}/*.trace.json.gz` packed as `<cell>_traces.tar.gz` | ~750 MB |
+
+Each run is **append-only**: a new `runs/<RUN_TAG>/` folder + a new Release. Previous runs/releases
+are never overwritten — they stay at their stable URLs forever (unless you `gh release delete`).
+Works on private repos (download just requires `gh auth login`).
+
+### One-time setup
+```bash
+# 1. Create the empty private repo (any name; we use the example below).
+gh repo create jybsuper/lora-traces --private --description "kimi-regression skill output (append-only)"
+
+# 2. Make sure your gh CLI is authenticated and has release + push rights to the repo.
+gh auth status
+
+# 3. (Optional) override the local clone location used by publish.sh:
+# export RESULTS_LOCAL=$HOME/.cache/sglang-results-yanbin-jiang_sglang-kimi-regression  # default
+```
+
+### Per-run usage (set the env, that's it)
+```bash
+# Set BEFORE launching run_kimi.sh — run_kimi.sh auto-calls publish.sh on success when RESULTS_REPO is set.
+export RESULTS_REPO=jybsuper/lora-traces
+# (optional) override the auto tag — default is kimi-reg-<variant-shorthash>-<timestamp>
+# export RUN_TAG=kimi-reg-7e9981f10e-cuda-graph-war
+
+ID="$ID" RUN_ROOT="$RUN_ROOT" bash /tmp/run_kimi.sh > "$RUN_ROOT/kimi.out" 2>&1 &
+```
+
+To publish a run you already collected locally without re-running the bench:
+```bash
+RUN_ROOT="$RUN_ROOT" RESULTS_REPO=jybsuper/lora-traces \
+  bash "$SKILL/scripts/publish.sh"
+```
+Add `PUBLISH_DRY=1` to do everything (clone, README, tarball) **except** the final `git push` +
+`gh release create` — useful when iterating on the README.
+
+### What ends up in the repo (per run)
+```
+runs/kimi-reg-7e9981f10e-20260602_015706/
+  README.md          # auto-generated: perf tables, % of base, sanity, acc, prompts coherence,
+                     # cell descriptions, gh-release download commands
+  meta.env           # base_src / base_commit / variant_src / variant_commit (so build_readme.py
+                     # can be re-run later if you tweak the README format)
+  cells/
+    base/{acc,bench,prompts}/...
+    variant/{acc,bench,prompts}/...
+    variant_2stream_off/{traces was removed → only what other subdirs survive}/...
+```
+Traces for the same run are in `<repo>/releases/tag/<RUN_TAG>`, with one
+`<cell>_traces.tar.gz` per cell. The README that's checked in `runs/<RUN_TAG>/README.md` is the
+**same content** as the release notes — both ways of reading a run land on the same write-up.
+
+### Describing a custom cell (beyond `base`/`variant`)
+If you add a profile-only cell like `variant_2stream_off` (see §4 commentary), drop a short
+`cell.md` inside its local folder before publish runs — `build_readme.py` will paste it verbatim
+into the "Cells in this run" section. Example:
+```bash
+echo "variant + SGLANG_TWO_STREAM_MAX_TOKENS=0 (overlap disabled) — profile-only" \
+     > "$RUN_ROOT/kimi/variant_2stream_off/cell.md"
+```
 
 ## 6. Cleanup (only after the summary + traces are safely in ~/Downloads)
 
@@ -337,6 +415,19 @@ kubectl delete computedomain mnnvl-kimi-${ID}-compute-domain --ignore-not-found
 ```
 
 ## Operational notes
+- **Pod env (baked into `kimi-2node.yaml`, both head+worker):** each pod runs `privileged: true` +
+  `SYS_PTRACE`/`SYS_ADMIN` (so `py-spy dump`, `nsys`, `gdb` work in-pod). Three hostPath mounts on the
+  **node's local big disk** (`leira` nodes = a dedicated `/mnt/nvme-b` raid0 ~5T built from the 3 spare
+  1.7T NVMe; the 123G `/` is system-only and the older 1.7T `/mnt/nvme` also backs the containerd overlay):
+  `/root/.cache` ← `/mnt/nvme-b/sglang-dot-cache` (persistent, **per-node, never shared/NFS** → the ~20-min
+  cold `fp4_gemm` autotune + triton/torch JIT survive pod deletes and can't contend cross-node, robustness
+  #1/#2), `/data` ← `/mnt/nvme-b` (big scratch, `type: Directory` so a pod **won't start** if the raid
+  isn't mounted — fail loud, never silently fall back to the system disk), `/host` ← `/` (escape hatch).
+  **Model + LoRA weights also persist on `/data`:** `setup.sh` downloads `nvidia/Kimi-K2.5-NVFP4` →
+  `/data/Kimi-K2.5-NVFP4` and the adapter → `/data/kimi_k25_lora_alpha` (under an `flock` on
+  `/data/.kimi-download.lock` so a concurrent same-node run waits instead of clobbering), and `run_kimi.sh`'s
+  `MODEL_PATH`/`LORA_PATH` point there — so pod recreations on a node reuse the weights, no multi-hundred-GB
+  re-download. (Within one run head+worker are on different nodes → they still download in parallel.)
 - **Ghost GPU memory is page cache, not a leak** (GB200 exposes HBM as cpu-less NUMA). Prevented by
   `numactl --membind=0,1` on downloads + launch; cleaned by the §3 `drop_caches`. Applied identically to
   both cells so it can't bias the comparison.
@@ -344,17 +435,3 @@ kubectl delete computedomain mnnvl-kimi-${ID}-compute-domain --ignore-not-found
   start, that cell is blocked. A common skew is a `deep_gemm` API mismatch during FP8/JIT warmup — fix by
   testing a compatible commit/image, **not** by disabling a perf path. The crash is in `/tmp/server.log`.
 - **Right-size requests** (memory/ephemeral-storage are scheduling reservations) if a pod is `Pending`.
-
----
-
-## ⚠️ 規則（DECODE-THPT-RULE）：跑 benchmark 不能只看 e2e 結果
-禁止只看 bench 的 e2e 匯總數字（throughput / latency 那行）就下結論。**必須同時去看 server log 裡打印出來的 decode throughput（gen/decode token/s）**，確認它跟 e2e 結果一致，並把這個 decode thpt 數字一起記錄到 journal.md / PR description 裡。
----
-
-## ⚠️ 規則（STUCK-CHECK-RULE）：看起來卡住 ≠ 真的卡死，先驗證再動手
-當一個 launch/run/autotune **看起來卡住**（log 不動、某步 elapsed 一直往上爬、進度條停在同一步），**不要**直接假設它死了就 kill/重啟。要**時不時用 `top`/`htop`/`nvidia-smi` 之類去看**它到底在不在跑：
-- `top`/`htop`：CPU 在忙 → 通常是 JIT/編譯/autotune 在跑（例如 cold `fp4_gemm` autotune 是 **CPU-bound**，這時 **GPU util 會是 0%**，但它沒卡）。
-- `nvidia-smi`：看 util / power / memory 有沒有變化。
-- 看 **log 的位元組數或步數**在 ~60–120s 內有沒有往前（`wc -c`、進度條的 step 數）。
-- 只有在 **CPU≈0 且 GPU util≈0 且 log/step 連續兩次檢查都沒推進**時，才判定為真 hang，再走 kill_all + 乾淨重啟。
-（血淚教訓：曾把 cold autotune 的 0% GPU 誤判成 hang。）

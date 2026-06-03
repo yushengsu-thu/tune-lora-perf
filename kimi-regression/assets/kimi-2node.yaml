@@ -1,5 +1,6 @@
 ---
 # Headless Service for inter-pod DNS.
+# Head FQDN: mnnvl-kimi-${ID}-0.mnnvl-kimi-${ID}-head.<ns>.svc.cluster.local
 apiVersion: v1
 kind: Service
 metadata:
@@ -14,6 +15,7 @@ spec:
     port: 20000
     targetPort: 20000
 ---
+# ComputeDomain — declares an MNNVL / IMEX fabric clique (claim-driven mode).
 apiVersion: resource.nvidia.com/v1beta1
 kind: ComputeDomain
 metadata:
@@ -57,6 +59,10 @@ spec:
   - name: sglang
     image: lmsysorg/sglang:dev-cu13
     imagePullPolicy: Always
+    securityContext:
+      privileged: true                      # py-spy / nsys / gdb need it; also lets us mount inside
+      capabilities:
+        add: ["SYS_PTRACE", "SYS_ADMIN"]
     command:
     - /bin/sh
     - -c
@@ -66,45 +72,35 @@ spec:
       #!/bin/bash
       set -o pipefail
       log(){ echo "[setup $(date -u +%H:%M:%S)] $*"; }
-
-      log "ensuring numactl is present (used to keep page cache off HBM NUMA nodes)"
+      log "ensuring numactl is present (keeps page cache off HBM NUMA nodes)"
       command -v numactl >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq numactl; } || true
-
       log "installing hf_xet + hf_transfer download accelerators"
       pip install --quiet "huggingface_hub[hf_xet,hf_transfer]" hf_xet hf_transfer || true
-
-      if [ -f "$HOME/.cargo/env" ]; then
-        grep -q 'cargo/env' ~/.bashrc 2>/dev/null || echo '. "$HOME/.cargo/env"' >> ~/.bashrc
-        . "$HOME/.cargo/env"
-      fi
-
+      if [ -f "$HOME/.cargo/env" ]; then grep -q 'cargo/env' ~/.bashrc 2>/dev/null || echo '. "$HOME/.cargo/env"' >> ~/.bashrc; . "$HOME/.cargo/env"; fi
       if [ -d /root/sglang/.git ]; then
-        log "updating /root/sglang -> origin/main"
-        cd /root/sglang
+        log "updating /root/sglang -> origin/main"; cd /root/sglang
         git remote set-url origin https://github.com/sgl-project/sglang.git 2>/dev/null || true
         git fetch origin main && git reset --hard origin/main
       else
-        log "cloning sglang"
-        rm -rf /root/sglang && git clone https://github.com/sgl-project/sglang /root/sglang
-        cd /root/sglang
+        log "cloning sglang"; rm -rf /root/sglang && git clone https://github.com/sgl-project/sglang /root/sglang; cd /root/sglang
       fi
-      log "pip install -e /root/sglang/python (a few minutes)"
-      cd /root/sglang && pip install -e python
-
-      mkdir -p /root/Kimi-K2.5-NVFP4 /root/kimi_k25_lora_alpha
-      if [ ! -f /root/Kimi-K2.5-NVFP4/config.json ]; then
-        log "downloading nvidia/Kimi-K2.5-NVFP4"
-        numactl --membind=0,1 hf download nvidia/Kimi-K2.5-NVFP4 --local-dir /root/Kimi-K2.5-NVFP4 & m=$!
-      fi
-      if [ ! -f /root/kimi_k25_lora_alpha/adapter_config.json ]; then
-        log "downloading jybsuper/kimi_k25_lora_alpha (private; needs HF_TOKEN)"
-        numactl --membind=0,1 hf download jybsuper/kimi_k25_lora_alpha --local-dir /root/kimi_k25_lora_alpha & l=$!
-      fi
-      [ -n "${m:-}" ] && wait $m
-      [ -n "${l:-}" ] && wait $l
-
-      touch /root/.setup-done
-      log "setup complete"
+      log "pip install -e /root/sglang/python (a few minutes)"; cd /root/sglang && pip install -e python
+      # NVFP4 base must come from a real directory (NOT the HF-cache symlink layout). Download to
+      # /data (the node's persistent big disk) so pod recreations reuse it. /data is shared across runs
+      # on this node, so an flock makes a concurrent same-node run WAIT instead of clobbering the dir.
+      mkdir -p /data/Kimi-K2.5-NVFP4 /data/kimi_k25_lora_alpha
+      (
+        flock 9
+        if [ ! -f /data/Kimi-K2.5-NVFP4/config.json ]; then
+          log "downloading nvidia/Kimi-K2.5-NVFP4 -> /data (persistent)"
+          numactl --membind=0,1 hf download nvidia/Kimi-K2.5-NVFP4 --local-dir /data/Kimi-K2.5-NVFP4
+        else log "reusing cached /data/Kimi-K2.5-NVFP4"; fi
+        if [ ! -f /data/kimi_k25_lora_alpha/adapter_config.json ]; then
+          log "downloading jybsuper/kimi_k25_lora_alpha (private; needs HF_TOKEN) -> /data"
+          numactl --membind=0,1 hf download jybsuper/kimi_k25_lora_alpha --local-dir /data/kimi_k25_lora_alpha
+        else log "reusing cached /data/kimi_k25_lora_alpha"; fi
+      ) 9>/data/.kimi-download.lock
+      touch /root/.setup-done; log "setup complete"
       SETUP
       chmod +x /root/setup.sh
       ( /root/setup.sh > /root/setup.log 2>&1 ) &
@@ -133,7 +129,7 @@ spec:
     resources:
       requests:
         nvidia.com/gpu: 4
-        memory: "800Gi"
+        memory: "800Gi"   # scheduling reservation only; lower (not GPU count) if Pending on a smaller node
         cpu: "16"
         ephemeral-storage: "100Gi"
       limits:
@@ -146,19 +142,34 @@ spec:
     volumeMounts:
     - name: shm
       mountPath: /dev/shm
-    # Persist /root/.cache (flashinfer fp4_gemm autotune, triton/deep_gemm JIT, HF modules) across pod
-    # recreations so the ~17-21min cold autotune is paid once per node, not every launch.
-    - name: sglang-cache
+    # Persistent, PER-NODE JIT/autotune cache (flashinfer fp4_gemm ~20min cold-tune, triton, torch
+    # inductor, HF hub). hostPath on the node's local big disk -> survives pod delete AND is single-machine
+    # (never a shared/NFS mount), so cross-node JIT compiles can't contend. See robustness #1/#2.
+    - name: dot-cache
       mountPath: /root/.cache
+    # The node's big local NVMe disk (1.7T, ext4) for large scratch / artifacts.
+    - name: data
+      mountPath: /data
+    # Escape hatch: the whole host filesystem, in case a node dir needs to be reached that wasn't mounted.
+    - name: host-root
+      mountPath: /host
   volumes:
   - name: shm
     emptyDir:
       medium: Memory
       sizeLimit: 32Gi
-  - name: sglang-cache
+  - name: dot-cache
     hostPath:
-      path: /var/lib/sglang-cache
+      path: /mnt/nvme-b/sglang-dot-cache   # dedicated raid0 big disk; subdir created on first use
       type: DirectoryOrCreate
+  - name: data
+    hostPath:
+      path: /mnt/nvme-b                     # dedicated raid0 big disk (3x1.7T spares); MUST be mounted
+      type: Directory
+  - name: host-root
+    hostPath:
+      path: /
+      type: Directory
 ---
 apiVersion: v1
 kind: Pod
@@ -193,6 +204,10 @@ spec:
   - name: sglang
     image: lmsysorg/sglang:dev-cu13
     imagePullPolicy: Always
+    securityContext:
+      privileged: true                      # py-spy / nsys / gdb need it; also lets us mount inside
+      capabilities:
+        add: ["SYS_PTRACE", "SYS_ADMIN"]
     command:
     - /bin/sh
     - -c
@@ -202,45 +217,29 @@ spec:
       #!/bin/bash
       set -o pipefail
       log(){ echo "[setup $(date -u +%H:%M:%S)] $*"; }
-
-      log "ensuring numactl is present (used to keep page cache off HBM NUMA nodes)"
       command -v numactl >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq numactl; } || true
-
-      log "installing hf_xet + hf_transfer download accelerators"
       pip install --quiet "huggingface_hub[hf_xet,hf_transfer]" hf_xet hf_transfer || true
-
-      if [ -f "$HOME/.cargo/env" ]; then
-        grep -q 'cargo/env' ~/.bashrc 2>/dev/null || echo '. "$HOME/.cargo/env"' >> ~/.bashrc
-        . "$HOME/.cargo/env"
-      fi
-
+      if [ -f "$HOME/.cargo/env" ]; then grep -q 'cargo/env' ~/.bashrc 2>/dev/null || echo '. "$HOME/.cargo/env"' >> ~/.bashrc; . "$HOME/.cargo/env"; fi
       if [ -d /root/sglang/.git ]; then
-        log "updating /root/sglang -> origin/main"
-        cd /root/sglang
-        git remote set-url origin https://github.com/sgl-project/sglang.git 2>/dev/null || true
+        cd /root/sglang; git remote set-url origin https://github.com/sgl-project/sglang.git 2>/dev/null || true
         git fetch origin main && git reset --hard origin/main
       else
-        log "cloning sglang"
-        rm -rf /root/sglang && git clone https://github.com/sgl-project/sglang /root/sglang
-        cd /root/sglang
+        rm -rf /root/sglang && git clone https://github.com/sgl-project/sglang /root/sglang; cd /root/sglang
       fi
-      log "pip install -e /root/sglang/python (a few minutes)"
       cd /root/sglang && pip install -e python
-
-      mkdir -p /root/Kimi-K2.5-NVFP4 /root/kimi_k25_lora_alpha
-      if [ ! -f /root/Kimi-K2.5-NVFP4/config.json ]; then
-        log "downloading nvidia/Kimi-K2.5-NVFP4"
-        numactl --membind=0,1 hf download nvidia/Kimi-K2.5-NVFP4 --local-dir /root/Kimi-K2.5-NVFP4 & m=$!
-      fi
-      if [ ! -f /root/kimi_k25_lora_alpha/adapter_config.json ]; then
-        log "downloading jybsuper/kimi_k25_lora_alpha (private; needs HF_TOKEN)"
-        numactl --membind=0,1 hf download jybsuper/kimi_k25_lora_alpha --local-dir /root/kimi_k25_lora_alpha & l=$!
-      fi
-      [ -n "${m:-}" ] && wait $m
-      [ -n "${l:-}" ] && wait $l
-
-      touch /root/.setup-done
-      log "setup complete"
+      mkdir -p /data/Kimi-K2.5-NVFP4 /data/kimi_k25_lora_alpha
+      (
+        flock 9
+        if [ ! -f /data/Kimi-K2.5-NVFP4/config.json ]; then
+          log "downloading nvidia/Kimi-K2.5-NVFP4 -> /data (persistent)"
+          numactl --membind=0,1 hf download nvidia/Kimi-K2.5-NVFP4 --local-dir /data/Kimi-K2.5-NVFP4
+        else log "reusing cached /data/Kimi-K2.5-NVFP4"; fi
+        if [ ! -f /data/kimi_k25_lora_alpha/adapter_config.json ]; then
+          log "downloading jybsuper/kimi_k25_lora_alpha (private; needs HF_TOKEN) -> /data"
+          numactl --membind=0,1 hf download jybsuper/kimi_k25_lora_alpha --local-dir /data/kimi_k25_lora_alpha
+        else log "reusing cached /data/kimi_k25_lora_alpha"; fi
+      ) 9>/data/.kimi-download.lock
+      touch /root/.setup-done; log "setup complete"
       SETUP
       chmod +x /root/setup.sh
       ( /root/setup.sh > /root/setup.log 2>&1 ) &
@@ -282,16 +281,31 @@ spec:
     volumeMounts:
     - name: shm
       mountPath: /dev/shm
-    # Persist /root/.cache (flashinfer fp4_gemm autotune, triton/deep_gemm JIT, HF modules) across pod
-    # recreations so the ~17-21min cold autotune is paid once per node, not every launch.
-    - name: sglang-cache
+    # Persistent, PER-NODE JIT/autotune cache (flashinfer fp4_gemm ~20min cold-tune, triton, torch
+    # inductor, HF hub). hostPath on the node's local big disk -> survives pod delete AND is single-machine
+    # (never a shared/NFS mount), so cross-node JIT compiles can't contend. See robustness #1/#2.
+    - name: dot-cache
       mountPath: /root/.cache
+    # The node's big local NVMe disk (1.7T, ext4) for large scratch / artifacts.
+    - name: data
+      mountPath: /data
+    # Escape hatch: the whole host filesystem, in case a node dir needs to be reached that wasn't mounted.
+    - name: host-root
+      mountPath: /host
   volumes:
   - name: shm
     emptyDir:
       medium: Memory
       sizeLimit: 32Gi
-  - name: sglang-cache
+  - name: dot-cache
     hostPath:
-      path: /var/lib/sglang-cache
+      path: /mnt/nvme-b/sglang-dot-cache   # dedicated raid0 big disk; subdir created on first use
       type: DirectoryOrCreate
+  - name: data
+    hostPath:
+      path: /mnt/nvme-b                     # dedicated raid0 big disk (3x1.7T spares); MUST be mounted
+      type: Directory
+  - name: host-root
+    hostPath:
+      path: /
+      type: Directory
