@@ -1,5 +1,5 @@
 1. 你看目前的任務是什麼？在/Users/yushengsu/Downloads/river的路徑下以任務名稱創建一個路徑，然後這路徑裡生成一個journal.md，這個journal.md記錄你要做的事、你做的每一步，以及每次跑acc跟benchmarking的結果。
-2. 然後我目前的repo是 /Users/yushengsu/Downloads/river/sglang, branch 是 lora-opti-nvfp4（本機分支，tracking 上游 https://github.com/jybsuper/sglang/tree/nvfp4-lora），你每次都要檢查一下是否 lora-opti-nvfp4 都有跟原本的branch，最新的code: https://github.com/jybsuper/sglang/tree/nvfp4-lora sync，如果沒有sync的話你都要sync (git fetch jybsuper && git switch lora-opti-nvfp4 && git merge --ff-only jybsuper/nvfp4-lora)，然後你基於這個branch創建一個新的branch，新的branch的名字依照這任務命名，然後要注意的是，可能多個agent會共用同一個repo，所以你要自己建立worktree。
+2. 然後我目前的repo是 /Users/yushengsu/Downloads/river/sglang, branch 是 lora-opti（本機分支，tracking 上游 https://github.com/jybsuper/sglang/tree/lora-opti），你每次都要檢查一下是否 lora-opti 都有跟原本的branch，最新的code: https://github.com/jybsuper/sglang/tree/lora-opti sync，如果沒有sync的話你都要sync (git fetch jybsuper && git switch lora-opti && git merge --ff-only jybsuper/lora-lora)，然後你基於這個branch創建一個新的branch，新的branch的名字依照這任務命名，然後要注意的是，可能多個agent會共用同一個repo，所以你要自己建立worktree。
 3. 你的任務應該有多個steps，每做一個step，你就把這個新branch以及修改的code上傳到你launch的nodes
 4. id=随便起个名字就行, 我用来防止k8s resources 有conflict用的, 我的id用yushengsu-${date}-${time}
 5. 把一組你嘗試的都寫到pr的decription裡面，還有把journal.md也上傳上去，再用這些做法跑 regression跟benchmark。
