@@ -1,0 +1,134 @@
+---
+# Qwen3.5-35B-A3B-FP8 regression pod — SINGLE node, 4 GPU (attention TP=4, MoE EP=4).
+# Port of kimi-regression's hardened pod spec to the qwen35 single-node setup:
+#   * privileged + SYS_PTRACE/SYS_ADMIN (py-spy / nsys / gdb work in-pod)
+#   * /root/.cache  <- node-local /mnt/nvme-b/sglang-dot-cache  (JIT/autotune cache survives pod delete)
+#   * /data         <- node-local /mnt/nvme-b                   (model+LoRA weights persist; flock'd download)
+#   * /host         <- /                                        (escape hatch)
+# No Service / ComputeDomain needed (single node, no MNNVL rendezvous).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sglang-qwen35-${ID}
+  labels:
+    app: sglang-qwen35-${ID}
+spec:
+  runtimeClassName: nvidia-legacy
+  tolerations:
+  - key: "kubernetes.io/arch"
+    operator: "Equal"
+    value: "arm64"
+    effect: "NoSchedule"
+  - key: "nvidia.com/gpu"
+    operator: "Exists"
+    effect: "NoSchedule"
+  containers:
+  - name: sglang
+    image: lmsysorg/sglang:dev-cu13
+    imagePullPolicy: Always
+    securityContext:
+      privileged: true                      # py-spy / nsys / gdb need it
+      capabilities:
+        add: ["SYS_PTRACE", "SYS_ADMIN"]
+    command:
+    - /bin/sh
+    - -c
+    - |
+      set -e
+      cat > /root/setup.sh <<'SETUP'
+      #!/bin/bash
+      # No `set -u`: the stock ~/.bashrc references $PS1 (unbound in non-interactive shells).
+      set -o pipefail
+      log(){ echo "[setup $(date -u +%H:%M:%S)] $*"; }
+      log "ensuring numactl is present (keeps page cache off HBM NUMA nodes)"
+      command -v numactl >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq numactl; } || true
+      log "installing hf_xet + hf_transfer download accelerators"
+      pip install --quiet "huggingface_hub[hf_xet,hf_transfer]" hf_xet hf_transfer || true
+      if [ -f "$HOME/.cargo/env" ]; then grep -q 'cargo/env' ~/.bashrc 2>/dev/null || echo '. "$HOME/.cargo/env"' >> ~/.bashrc; . "$HOME/.cargo/env"; fi
+      if [ -d /root/sglang/.git ]; then
+        log "updating /root/sglang -> origin/main"; cd /root/sglang
+        git remote set-url origin https://github.com/sgl-project/sglang.git 2>/dev/null || true
+        git fetch origin main && git reset --hard origin/main
+      else
+        log "cloning sglang"; rm -rf /root/sglang && git clone https://github.com/sgl-project/sglang /root/sglang; cd /root/sglang
+      fi
+      log "pip install -e /root/sglang/python (a few minutes)"; cd /root/sglang && pip install -e python
+      # Weights persist on /data (the node's big local disk) so pod recreations on the same node reuse
+      # them. /data is shared across runs on this node -> flock makes a concurrent same-node run WAIT
+      # instead of clobbering the dir.
+      mkdir -p /data/Qwen3.5-35B-A3B-FP8 /data/qwen35_35b_lora_alpha
+      (
+        flock 9
+        if [ ! -f /data/Qwen3.5-35B-A3B-FP8/config.json ]; then
+          log "downloading Qwen/Qwen3.5-35B-A3B-FP8 -> /data (persistent)"
+          numactl --membind=0,1 hf download Qwen/Qwen3.5-35B-A3B-FP8 --local-dir /data/Qwen3.5-35B-A3B-FP8
+        else log "reusing cached /data/Qwen3.5-35B-A3B-FP8"; fi
+        if [ ! -f /data/qwen35_35b_lora_alpha/adapter_config.json ]; then
+          log "downloading jybsuper/qwen35_35b_lora_alpha (private; needs HF_TOKEN) -> /data"
+          numactl --membind=0,1 hf download jybsuper/qwen35_35b_lora_alpha --local-dir /data/qwen35_35b_lora_alpha
+        else log "reusing cached /data/qwen35_35b_lora_alpha"; fi
+      ) 9>/data/.qwen35-download.lock
+      touch /root/.setup-done; log "setup complete"
+      SETUP
+      chmod +x /root/setup.sh
+      ( /root/setup.sh > /root/setup.log 2>&1 ) &
+      sleep infinity
+    env:
+    - name: PATH
+      value: "/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    - name: LD_LIBRARY_PATH
+      value: "/usr/local/nvidia/lib64"
+    - name: NVIDIA_DISABLE_REQUIRE
+      value: "true"
+    - name: MALLOC_TRIM_THRESHOLD_
+      value: "131072"
+    - name: HF_HUB_ENABLE_HF_TRANSFER
+      value: "1"
+    - name: HF_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: hf-token-yanbin
+          key: token
+          optional: true
+    resources:
+      requests:
+        nvidia.com/gpu: 4
+        memory: "800Gi"   # scheduling reservation only; lower (not GPU count) if Pending on a smaller node
+        cpu: "16"
+        ephemeral-storage: "100Gi"
+      limits:
+        nvidia.com/gpu: 4
+        memory: "1500Gi"
+        cpu: "64"
+        ephemeral-storage: "1200Gi"
+    volumeMounts:
+    - name: shm
+      mountPath: /dev/shm
+    # Persistent, PER-NODE JIT/autotune cache (triton, torch inductor, flashinfer, HF hub). hostPath on
+    # the node's local big disk -> survives pod delete AND is single-machine (never shared/NFS), so
+    # cross-node JIT compiles can't contend.
+    - name: dot-cache
+      mountPath: /root/.cache
+    # The node's big local NVMe disk for large scratch / persistent weights.
+    - name: data
+      mountPath: /data
+    # Escape hatch: the whole host filesystem.
+    - name: host-root
+      mountPath: /host
+  volumes:
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 32Gi
+  - name: dot-cache
+    hostPath:
+      path: /mnt/nvme-b/sglang-dot-cache   # dedicated raid0 big disk; subdir created on first use
+      type: DirectoryOrCreate
+  - name: data
+    hostPath:
+      path: /mnt/nvme-b                     # dedicated raid0 big disk; MUST be mounted (fail loud)
+      type: Directory
+  - name: host-root
+    hostPath:
+      path: /
+      type: Directory
