@@ -199,7 +199,7 @@ Set the two refs (local branch/commit or GitHub URL), build both bundles, push t
 ```bash
 REPO=<local sglang checkout to build bundles from>
 BASE_SRC=origin/main                   # control — local ref OR GitHub URL
-VARIANT_SRC=<candidate-branch>         # may equal BASE_SRC (e.g. testing only a flag/env)
+VARIANT_SRC=jybsuper/full-lora-opti    # candidate — PR #27329; may equal BASE_SRC (testing only a flag/env)
 mkdir -p "$RUN_ROOT/$MODEL"
 git -C "$REPO" fetch -q origin main
 build(){ git -C "$REPO" branch -f __bench_target "$2"

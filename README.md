@@ -2,7 +2,9 @@
 
 LoRA performance tuning skills and regression/benchmark workflows for SGLang.
 
-All current development is based on this branch: https://github.com/jybsuper/sglang/tree/nvfp4-lora
+All current development targets this PR: **[sgl-project/sglang#27329](https://github.com/sgl-project/sglang/pull/27329)**
+(branch [`jybsuper:full-lora-opti`](https://github.com/jybsuper/sglang/tree/full-lora-opti)) — the experimental fast LoRA
+path gated behind `SGLANG_EXPERIMENTAL_LORA_OPTI=1` + `--moe-runner-backend experimental_sgl_trtllm`.
 
 ## Contents
 
@@ -10,35 +12,35 @@ All current development is based on this branch: https://github.com/jybsuper/sgl
 2. **Kernel fusion skill**: [`skill_kernel_fusion.md`](skill_kernel_fusion.md) — used at the final stage for tuning/optimizing fusion kernels (kernel fusion / kernel optimization)
 3. **Regression (acc + bench + prompts + profile, base vs variant)** — [`regression/`](regression):
    one generic driver + per-model parameter packs (formerly `kimi-regression/` + `qwen35_35b-regression/`).
-   Entry points: [`run_kimi.sh`](regression/run_kimi.sh) (Kimi-K2.5-NVFP4, 2-node MNNVL, tp8) and
+   Entry points: [`run_kimi.sh`](regression/run_kimi.sh) (Kimi-K2.5-NVFP4, 2-node MNNVL, tp8/ep8) and
    [`run_qwen35.sh`](regression/run_qwen35.sh) (Qwen3.5-35B-A3B-FP8, single node, tp4/ep4).
    Adding a model = a new `models/<m>/` pack + a `run_<m>.sh` wrapper — zero edits to `scripts/`.
 
    ```
    regression/
-   ├── SKILL.md                           # 共通操作手冊（generic workflow + 共通 robustness）
-   ├── run_kimi.sh                        # 入口 ①：Kimi 回歸
-   ├── run_qwen35.sh                      # 入口 ②：Qwen3.5 回歸
+   ├── SKILL.md                           # shared operating manual (generic workflow + common robustness)
+   ├── run_kimi.sh                        # entry point 1: Kimi regression
+   ├── run_qwen35.sh                      # entry point 2: Qwen3.5 regression
    │
-   ├── scripts/                           # ── generic 層：零模型字串 ──
-   │   ├── run_regression.sh              # 主驅動引擎（DRY_RUN=1 可預覽 launch 指令）
-   │   ├── prompts_check.py               # endpoint 健康檢查（decode gate）
-   │   ├── profile_metrics.py             # trace → forward-pass / per-layer 時間
-   │   ├── serverlog_sanity.py            # bench 防偽交叉驗證（>5% = SUSPECT）
-   │   ├── summary.py                     # 最終報告（acc-diff + perf-delta + 五重量測）
-   │   ├── build_readme.py                # 發佈用 README 產生
-   │   └── publish.sh                     # GitHub 發佈（小檔→commit、trace→Release）
+   ├── scripts/                           # ── generic layer: no model-specific strings ──
+   │   ├── run_regression.sh              # main driver engine (DRY_RUN=1 previews launch commands)
+   │   ├── prompts_check.py               # per-endpoint health check (the decode gate)
+   │   ├── profile_metrics.py             # trace → forward-pass / per-layer time
+   │   ├── serverlog_sanity.py            # bench anti-phantom cross-check (>5% = SUSPECT)
+   │   ├── summary.py                     # final report (acc-diff + perf-delta + 5-metric speed table)
+   │   ├── build_readme.py                # per-run README generator for publishing
+   │   └── publish.sh                     # GitHub publish (small files → commit, traces → Release)
    │
-   └── models/                            # ── per-model 層：四件套 ──
+   └── models/                            # ── per-model layer: four-piece packs ──
        ├── kimi/
-       │   ├── model.env                  # 參數（值）：拓撲/路徑/flags/profile 配方/容差
-       │   ├── pod.yaml                   # K8s 環境（2-pod + Service + ComputeDomain）
-       │   ├── hooks.sh                   # 模型邏輯（ghost-HBM drop_caches）
-       │   └── MODEL.md                   # 模型知識（env 矩陣、預期數值、模型限定 robustness）
+       │   ├── model.env                  # parameters (values): topology/paths/flags/profile recipe/tolerances
+       │   ├── pod.yaml                   # K8s env (2 pods + Service + ComputeDomain, MNNVL)
+       │   ├── hooks.sh                   # model logic (ghost-HBM drop_caches)
+       │   └── MODEL.md                   # model knowledge (env matrix, expected numbers, model-specific robustness)
        └── qwen35/
-           ├── model.env                  # （單 pod、tp4/ep4、FP8 參數）
-           ├── pod.yaml                   # （單 pod + /data hostPath）
-           ├── hooks.sh                   # （record_layers：動態讀層數）
+           ├── model.env                  # (single pod, tp4/ep4, FP8 parameters)
+           ├── pod.yaml                   # (single pod + /data hostPath)
+           ├── hooks.sh                   # (record_layers: reads layer count dynamically)
            └── MODEL.md
    ```
 4. **Profile recipes**:

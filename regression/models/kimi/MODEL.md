@@ -50,40 +50,48 @@ drop_caches). Topology: **2 nodes × 4 GB200 (MNNVL), `--tp 8`, no EP, NVFP4**.
 
 ## Env vars & serving configs (the opt-stack matrix — read before editing cells)
 
-> **Branch context (2026-06-02, `lora-opti` HEAD `7e9981f10e`).** The two-stream LoRA overlap
-> (attention O7–O11 + MoE gate_up O1) and the permute-memset skip are **UNCONDITIONAL** (their
-> `SGLANG_LORA_TWO_STREAM` / `SGLANG_OPT_FP4_LORA_SKIP_PERMUTE_MEMSET` gates were removed). The
-> **down-proj overlap was REMOVED entirely** (commit `cbb6e779`): perf-dead **and** garbage, and
-> MAIN_ALLOC does NOT rescue it (its garbage is the side-stream NCCL all-reduce +
-> `act_ready_event` mid-op sync, not a buffer-alloc WAR — verified 2026-06-02).
+> **Branch context (2026-06-05): development targets
+> [sgl-project/sglang#27329](https://github.com/sgl-project/sglang/pull/27329)
+> (`jybsuper:full-lora-opti`)** — the experimental fast LoRA path, gated behind the master
+> switch `SGLANG_EXPERIMENTAL_LORA_OPTI` (default **off** ⇒ upstream byte-identical) and
+> selected with `--moe-runner-backend experimental_sgl_trtllm`. New code is isolated in
+> `*/trtllm_lora_temp/`; env flags / backend name may still change during the upstream refactor.
+> (The older `lora-opti`-era notes — unconditional two-stream, removed down-overlap `cbb6e779`,
+> SHRINK_TUNE/SPLIT_K knobs — applied to `lora-opti@7e9981f10e`; on a 2026-06-05 validation run,
+> `lora-opti@867f2ca413fa` with the old env set produced LoRA decode garbage — use the PR branch.)
 
 **MNNVL/NCCL — required on EVERY launch (both cells; already in `model.env` LAUNCH_ENV_COMMON):**
 `NCCL_MNNVL_ENABLE=1 NCCL_NVLS_ENABLE=1 NCCL_CUMEM_ENABLE=1
 SGLANG_ENABLE_TP_MEMORY_INBALANCE_CHECK=false PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
 
-**LoRA opt-stack envs (trtllm `sgl_flashinfer_trtllm` backend; all default-off):**
+**PR #27329 kimi opt set (= the default variant cell in `model.env`):**
 
 | env var (default) | effect | when to set |
 |---|---|---|
+| `SGLANG_EXPERIMENTAL_LORA_OPTI` (False) | **master switch** for the whole fast path | **REQUIRED =1** on the variant cell; off ⇒ upstream behavior byte-identical. |
 | `SGLANG_FLASHINFER_NVFP4_PER_TOKEN_ACTIVATION` (False) | per-token act-scale for the NVFP4 decomposed LoRA path | **REQUIRED =1 for kimi NVFP4 LoRA** — else `input_scale!=1` → lora garbage. No-op on FP8/qwen. |
-| `SGLANG_ENABLE_NVFP4_GEMM_SWIGLU_FUSION` (True, main env) | nvfp4 shared-experts swiglu fusion | **SET =0 for kimi LoRA** — the fusion reads FP4 scales off the lora-wrapped gate_up → AttributeError at cuda-graph capture + bypasses the lora delta. |
-| `SGLANG_OPT_LORA_SHRINK_TUNE` (False) | hand-tuned triton config for the MoE LoRA shrink GEMM | optional perf, +22-33% on the shrink, acc-neutral. =1 in the default variant cell. |
-| `SGLANG_ENABLE_LORA_SHRINK_SPLIT_K` (False) | opt-in fp32 split-K for the dense LoRA-A shrink (PR #26962) | optional perf. =1 in the default variant cell. |
-| `SGLANG_OPT_LORA_OVERLAP_MAIN_ALLOC` (False) | shrink output allocated on the MAIN stream | not needed for kimi (single-site attention, no mamba) — harmless if set. REQUIRED on qwen3.5. |
-| `SGLANG_TWO_STREAM_MAX_TOKENS` (256) | two-stream fires only when decode batch ≤ N | leave 256. Set 0 to disable ALL overlaps (debug/serial). |
+| `SGLANG_ENABLE_NVFP4_GEMM_SWIGLU_FUSION` (True, main env) | nvfp4 shared-experts swiglu fusion | **SET =0 under LoRA** — `--enable-lora` auto-sets `disable_piecewise_cuda_graph`, the fusion activates and would bypass the LoRA delta. |
+| `SGLANG_OPT_USE_JIT_KERNEL_KIMI_GATE` (False) | JIT fused Kimi-K2 gate taking bf16 router logits directly | perf (drops two host-side fp32 upcast kernels). =1 in the default variant cell. |
+| `SGLANG_OPT_USE_JIT_KERNEL_MOE_ALIGN` (False) | JIT MoE-align kernel | perf. =1 in the default variant cell. |
+| `SGLANG_OPT_FUSED_PERMUTE_QUANT` (False) | NVFP4 fused permute+quant | perf. =1 in the default variant cell. |
+| `SGLANG_OPT_FUSED_MOE_ACTIVATION_QUANT_FUSE` (False) | NVFP4 fused activation+down-quant (FP4 gate_up de-interleave folded in) | perf. =1 in the default variant cell. |
 
-**REMOVED at HEAD — do NOT use (stale in older runs/scripts):** `SGLANG_LORA_TWO_STREAM`
-(always-on now), `SGLANG_OPT_FP4_LORA_SKIP_PERMUTE_MEMSET` (always-on),
-`SGLANG_LORA_OVERLAP_DOWN` / `_overlap_down` (down-overlap deleted),
-`SGLANG_OPT_LORA_SIDE_STREAM_POOL_SIZE` (superseded by MAIN_ALLOC).
+**NEVER set** `SGLANG_OPT_LORA_DOWN_FINALIZE_OVERLAP` (corrupts the base/no-active-LoRA path
+under cuda-graph — base gsm8k 0.38 vs 0.79) or `SGLANG_OPT_LORA_ENABLE_PDL`.
+
+**Stale `lora-opti`-era envs — meaningless on the PR branch:** `SGLANG_LORA_TWO_STREAM`,
+`SGLANG_OPT_FP4_LORA_SKIP_PERMUTE_MEMSET`, `SGLANG_LORA_OVERLAP_DOWN`,
+`SGLANG_OPT_LORA_SIDE_STREAM_POOL_SIZE`, `SGLANG_OPT_LORA_SHRINK_TUNE`,
+`SGLANG_ENABLE_LORA_SHRINK_SPLIT_K`.
 
 **Backend launch flags:**
-- trtllm LoRA (the candidate, = default variant cell): `--moe-runner-backend
-  sgl_flashinfer_trtllm --lora-use-virtual-experts` + the LoRA flags the driver adds.
-- cutlass LoRA (the **gold** reference): `--moe-runner-backend flashinfer_cutlass` + the same
-  LoRA flags. **Requires the `nvfp4-cutlass-lora@1be14567e0` branch** on the pods — stock cutlass
-  raises `NotImplementedError: LoRA MoE not supported for MoeRunnerBackend.FLASHINFER_CUTLASS`.
-- base (no-LoRA): drop all `--*lora*` flags + the opt-stack envs (keep the MNNVL group).
+- fast-path LoRA (the candidate, = default variant cell): `--moe-runner-backend
+  experimental_sgl_trtllm --lora-use-virtual-experts` + the LoRA flags the driver adds
+  (`--max-lora-rank 16` per the PR launch).
+- ⚠ a LoRA cell needs the explicit experimental backend — the stock default backend does not
+  support virtual-experts LoRA.
+- base (no-LoRA): drop all `--*lora*` flags + the opt-stack envs (keep the MNNVL group) —
+  this stock-default launch is the PR's "%-of-ceiling" denominator.
 
 ---
 
@@ -107,10 +115,13 @@ not proven purely cosmetic. Report observed output; assert neither.
 
 ---
 
-## Expected numbers
+## Expected numbers (PR #27329, TP8/EP8, cuda-graph-max-bs 128)
 
-- LoRA (trtllm, full opt stack) ≈ **75 / 79 / 78 %** of the no-lora (fusion-off) base at
-  bs16/32/64 (V4 reference: 867 / 1512 / 2481 tok/s).
+- no-LoRA ceiling: **1226 / 2139 / 3593 tok/s** at bs16/32/64; fast-path LoRA:
+  **997 / 1876 / 3335 = 81 / 88 / 93 %** of the ceiling.
+- gsm8k (200q, 5-shot): base **0.965** (≈ 0.950 no-LoRA stock); with-adapter ~0.02 (behavioral
+  adapter, by design — only confirms the LoRA is applied).
 - First launch READY ≈ 20 min (cold autotune); warm launches ≈ 160 s; cold first profile ≈ 340 s.
 - Per-layer metric divisor: **61 hidden layers** (1 dense + 60 MoE) — `model.env LAYERS=61`.
+- (lora-opti-era reference, TP8 no-EP, graph-max-bs 64: LoRA ≈ 75/79/78% of base 867/1512/2481.)
 - Full down-overlap/shrink bug write-up + standalone repro: `~/Desktop/DOWN_OVERLAP_AND_SHRINK_BUGS.md`.

@@ -36,32 +36,49 @@ robustness: `../../SKILL.md`. Parameters: `model.env` (launch flags from
 
 6. **A LoRA cell without an explicit `--moe-runner-backend` CRASHES at startup** — the model's
    default MoE backend (`flashinfer_trtllm`) does not support virtual-experts LoRA
-   (`NotImplementedError`). The default variant cell sets `sgl_flashinfer_trtllm`.
+   (`NotImplementedError`). The default variant cell sets `experimental_sgl_trtllm` (PR #27329).
 
 ---
 
 ## Env vars & serving configs (qwen3.5 opt stack)
 
+> **Branch context (2026-06-05): development targets
+> [sgl-project/sglang#27329](https://github.com/sgl-project/sglang/pull/27329)
+> (`jybsuper:full-lora-opti`)** — the experimental fast LoRA path, gated behind the master
+> switch `SGLANG_EXPERIMENTAL_LORA_OPTI` (default **off** ⇒ upstream byte-identical) and
+> selected with `--moe-runner-backend experimental_sgl_trtllm`. On a 2026-06-05 validation run,
+> the older `lora-opti@867f2ca413fa` with the old env set produced LoRA decode garbage
+> (`Thinking!!!!`) despite MAIN_ALLOC=1 — use the PR branch.
+
 No MNNVL/NCCL group needed (single node). `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is
-applied to **both** cells (fair; from `run_script.sh`).
+applied to **both** cells (fair).
+
+**PR #27329 qwen3.5 opt set (= the default variant cell in `model.env`):**
 
 | env var (default) | effect | when to set |
 |---|---|---|
+| `SGLANG_EXPERIMENTAL_LORA_OPTI` (False) | **master switch** for the whole fast path | **REQUIRED =1** on the variant cell; off ⇒ upstream behavior byte-identical. |
 | `SGLANG_OPT_LORA_OVERLAP_MAIN_ALLOC` (False) | allocate the two-stream LoRA-A shrink OUTPUT on the MAIN stream | **REQUIRED =1 for qwen3.5 LoRA** (mamba + cuda-graph WAR → `Thinking!!!!` without it). |
-| `SGLANG_ENABLE_LORA_SHRINK_SPLIT_K` (False) | opt-in fp32 split-K for the dense LoRA-A shrink (PR #26962) | optional perf; wins on wide-K shrinks. =1 in the default variant cell (run_script.sh does). |
-| `SGLANG_OPT_LORA_SHRINK_TUNE` (False) | hand-tuned triton config for the MoE LoRA shrink GEMM | optional perf, acc-neutral. Not in run_script.sh's set — add deliberately if testing it. |
-| `SGLANG_TWO_STREAM_MAX_TOKENS` (256) | two-stream fires only when decode batch ≤ N | leave 256. Set 0 to disable ALL overlaps (debug/serial). |
+| `SGLANG_OPT_LORA_SHARED_ADD_OVERLAP` (False) | overlap the shared-expert add on the side stream | perf. =1 in the default variant cell (per the PR launch). |
+| `SGLANG_OPT_LORA_CUBLAS` (False) | cuBLAS LoRA shrink/expand GEMMs | perf. =1 in the default variant cell (per the PR launch). |
+
+**NEVER set** `SGLANG_OPT_LORA_DOWN_FINALIZE_OVERLAP` (corrupted the base/no-active-LoRA path
+under cuda-graph — base gsm8k 0.81→0.37; removed) or `SGLANG_OPT_LORA_ENABLE_PDL`.
+**Stale `lora-opti`-era envs — don't carry over:** `SGLANG_OPT_LORA_SHRINK_TUNE`,
+`SGLANG_ENABLE_LORA_SHRINK_SPLIT_K`.
 
 **Backend launch flags:**
-- trtllm LoRA (the candidate, = default variant cell = `run_script.sh`):
-  `--moe-runner-backend sgl_flashinfer_trtllm --lora-use-virtual-experts` + the LoRA flags the
-  driver adds (`--max-lora-rank 16`).
-- stock/triton LoRA (older reference): `--moe-runner-backend triton` + the same LoRA flags.
-- base (no-LoRA): drop all `--*lora*` flags + the opt-stack envs.
+- fast-path LoRA (the candidate, = default variant cell = the PR's tested launch):
+  `--moe-runner-backend experimental_sgl_trtllm --lora-use-virtual-experts` + the LoRA flags
+  the driver adds (`--max-lora-rank 16`).
+- stock/triton LoRA (the upstream reference, ~47–49% of ceiling): `--moe-runner-backend triton`
+  + the same LoRA flags.
+- base (no-LoRA): drop all `--*lora*` flags + the opt-stack envs — the PR's "%-of-ceiling"
+  denominator.
 
-**Model-standard server args (BOTH cells, from `run_script.sh`; in `model.env`):**
-`--tp 4 --ep 4 --cuda-graph-max-bs 64 --mem-fraction-static 0.8 --max-prefill-tokens 32768
---chunked-prefill-size 4096 --mamba-scheduler-strategy extra_buffer
+**Model-standard server args (BOTH cells, from the PR's qwen launch; in `model.env`):**
+`--tp 4 --ep 4 --cuda-graph-max-bs 128 --mem-fraction-static 0.8 --max-prefill-tokens 65536
+--chunked-prefill-size 65536 --mamba-scheduler-strategy extra_buffer
 --enable-flashinfer-allreduce-fusion --attention-backend trtllm_mha`
 
 **The `alpha` adapter:** same caveats as kimi (see `../kimi/MODEL.md`) — training intent not
@@ -81,9 +98,12 @@ OpenAI `model="<base>:alpha"` (colon syntax); `model="alpha"` alone does NOT rou
 
 ---
 
-## Expected numbers
+## Expected numbers (PR #27329, TP4/EP4, cuda-graph-max-bs 128)
 
-- LoRA (trtllm + MAIN_ALLOC + SPLIT_K) ≈ **72 / 75 / 77 %** of the no-lora base at bs16/32/64.
+- no-LoRA ceiling: **3525 / 5928 / 10562 tok/s** at bs16/32/64; fast-path LoRA:
+  **2782 / 4969 / 8692 = 79 / 84 / 82 %** of the ceiling (stock `triton` LoRA: only 47–49%).
+- gsm8k (200q, 5-shot): base **0.775** (≈ 0.770 stock triton); with-adapter ~0.03 (behavioral
+  adapter, by design — only confirms the LoRA is applied).
 - Layer count: dynamic — `hooks.sh record_layers` reads `num_hidden_layers` from the model's
   `config.json` (nested under `text_config` in qwen3.5's multimodal-style layout) into
   `meta.env` for `summary.py`'s per-layer metric.
