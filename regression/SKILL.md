@@ -20,6 +20,18 @@ Runs **all four tests** on a **base** vs a **variant** serving config and produc
 `~/Downloads/...` folder with an acc-diff table, a perf-delta table (incl. prefill/decode split),
 a per-endpoint prompt-check table, and kernel-structure profiler traces.
 
+> **Validation status (2026-06-05):** the merged driver passed a full end-to-end run on GB200
+> (`leira`) — qwen35, 2 cells × {graph-on, graph-off}, driver exit 0, 44 artifacts + 10/10 traces
+> gzip-verified, all 6 bench-vs-serverlog sanity checks ≤2%. Exercised live: kill_all GPU=0 loop,
+> wait_ready, hooks (record_layers), `bs*.sanity` files, and the chunked-retry trace pull (a real
+> 97MB-trace truncation triggered the 20MB-split fallback, which recovered). Launch flags were
+> separately verified flag-for-flag identical to the pre-merge runners via `DRY_RUN=1`.
+> NOT yet exercised live: the kimi 2-node-only lines (DNS rendezvous, worker-first start,
+> cross-pod trace pull, drop_caches hook) — ported verbatim from the proven kimi runner.
+> Run-finding from that validation: at `lora-opti` HEAD `867f2ca413fa`, qwen3.5 LoRA decode
+> collapses to `Thinking!!!!` on ALL endpoints **despite `MAIN_ALLOC=1`** (acc/prefill clean —
+> only the prompt-check caught it). Regression vs the documented `7e9981f10e` behavior.
+
 ```
 regression/
 ├── SKILL.md                  # this file — generic workflow + common robustness
