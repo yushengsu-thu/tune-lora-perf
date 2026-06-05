@@ -265,6 +265,8 @@ run_cell(){  # $1=cell (base|variant)  — runs ALL FOUR tests (acc, bench, prom
   echo "================= CELL $1 ================="
   declare -f hook_between_cells >/dev/null && hook_between_cells   # model hook (e.g. drop_caches)
   checkout "$(cell_ref "$1")"
+  # model hook (e.g. re-pin image-matching deps that `pip install -e` just bumped)
+  declare -f hook_post_checkout >/dev/null && hook_post_checkout "$1"
   launch "$1" on || { echo "[$1] graph-ON launch FAILED after retry — skipping cell"; return 1; }
   acc   "$1"; dl "$1/acc";                    echo "[$(date +%H:%M:%S)] ${MODEL} $1 ACC done"   | tee -a "${RUN_ROOT}/progress.log"
   bench "$1"; dl "$1/bench";                  echo "[$(date +%H:%M:%S)] ${MODEL} $1 BENCH done" | tee -a "${RUN_ROOT}/progress.log"

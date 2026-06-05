@@ -21,3 +21,19 @@ hook_between_cells(){
     fi
   done
 }
+
+# hook_post_checkout — called after every checkout's `pip install -e python`.
+#
+# The branch's pyproject pins flashinfer_python==0.6.12 ("aligned with jit-cache in Dockerfile"),
+# but PR #27329's trtllm_lora_temp JIT kernels only COMPILE against the 0.6.11 trtllm headers
+# (0.6.12 changed get_sf_out_offset_* signatures — the PR's own CI Extra is red on this), and the
+# pinned pod image ships flashinfer-jit-cache 0.6.11.post1+cu130. So after each editable install
+# re-pin the python side back to the image-matching version (FLASHINFER_PIN in model.env).
+# Remove this hook (and the image digest pin in pod.yaml) when the PR rebases onto 0.6.12.
+hook_post_checkout(){
+  local P
+  [ -n "${FLASHINFER_PIN:-}" ] || return 0
+  for P in "${PODS[@]}"; do
+    kp "$P" "pip install -q \"flashinfer_python[cu13]==${FLASHINFER_PIN}\" \"flashinfer_cubin==${FLASHINFER_PIN}\" 2>&1 | tail -1; python3 -c 'import flashinfer; print(\"  [hook] flashinfer\", flashinfer.__version__)'"
+  done
+}

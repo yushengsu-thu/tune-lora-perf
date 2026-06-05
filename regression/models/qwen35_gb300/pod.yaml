@@ -1,0 +1,114 @@
+---
+# Qwen3.5-35B-A3B-FP8 regression pod — GB300 (sm_103) variant, SINGLE node, 4 GPU (TP=4, EP=4).
+# Target cluster: gcp-radixark-02 (GKE, a4x-maxgpu-4g-metal / nvidia-gb300, 25 nodes).
+# Differences vs the GB200/leira pod (models/qwen35/pod.yaml), matching the cluster's conventions
+# (taken from working pods on that cluster):
+#   * NO runtimeClassName (GKE; no `nvidia-legacy` class there)
+#   * NO privileged/securityContext (cluster pods run without it; torch profiler works)
+#   * NO hostPath mounts — no /mnt/nvme-b on these nodes: weights download to the pod's
+#     ephemeral /root (re-downloaded on pod recreation; JIT cache is cold per pod)
+#   * shm 128Gi, memory limit 850Gi (per the cluster's working pods)
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sglang-qwen35gb300-${ID}
+  labels:
+    app: sglang-qwen35gb300-${ID}
+spec:
+  tolerations:
+  - key: "kubernetes.io/arch"
+    operator: "Equal"
+    value: "arm64"
+    effect: "NoSchedule"
+  - key: "nvidia.com/gpu"
+    operator: "Exists"
+    effect: "NoSchedule"
+  # The cluster's FREE gb300 nodes carry this org cohort-reservation taint — without the
+  # toleration they count as "untolerated" and the pod stays Pending even with 4 idle GPUs.
+  # (Do NOT add a gpu-maintenance toleration — those nodes are drained for a reason.)
+  - key: "radixark.io/cohort"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+  containers:
+  - name: sglang
+    # Image PINNED by digest: PR #27329's trtllm_lora_temp JIT kernels compile against this
+    # build's tensorrt_llm headers. The floating dev-cu13 tag moved (2026-06-06) to a build whose
+    # get_sf_out_offset_* signatures changed -> JIT compile error at variant launch. Re-pin (or
+    # un-pin) when the PR rebases onto current main/flashinfer.
+    image: lmsysorg/sglang@sha256:97e7cd699dc879b56bc9f7a11f25c060fa4a6137e901a637f4378e9b01607a01
+    imagePullPolicy: IfNotPresent
+    command:
+    - /bin/sh
+    - -c
+    - |
+      set -e
+      cat > /root/setup.sh <<'SETUP'
+      #!/bin/bash
+      # No `set -u`: the stock ~/.bashrc references $PS1 (unbound in non-interactive shells).
+      set -o pipefail
+      log(){ echo "[setup $(date -u +%H:%M:%S)] $*"; }
+      log "ensuring numactl is present (keeps page cache off HBM NUMA nodes)"
+      command -v numactl >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq numactl; } || true
+      log "installing hf_xet + hf_transfer download accelerators"
+      pip install --quiet "huggingface_hub[hf_xet,hf_transfer]" hf_xet hf_transfer || true
+      if [ -f "$HOME/.cargo/env" ]; then grep -q 'cargo/env' ~/.bashrc 2>/dev/null || echo '. "$HOME/.cargo/env"' >> ~/.bashrc; . "$HOME/.cargo/env"; fi
+      if [ -d /root/sglang/.git ]; then
+        log "updating /root/sglang -> origin/main"; cd /root/sglang
+        git remote set-url origin https://github.com/sgl-project/sglang.git 2>/dev/null || true
+        git fetch origin main && git reset --hard origin/main
+      else
+        log "cloning sglang"; rm -rf /root/sglang && git clone https://github.com/sgl-project/sglang /root/sglang; cd /root/sglang
+      fi
+      log "pip install -e /root/sglang/python (a few minutes)"; cd /root/sglang && pip install -e python
+      # Ephemeral /root (no big hostPath disk on these GKE nodes) — re-downloaded per pod.
+      mkdir -p /root/Qwen3.5-35B-A3B-FP8 /root/qwen35_35b_lora_alpha
+      if [ ! -f /root/Qwen3.5-35B-A3B-FP8/config.json ]; then
+        log "downloading Qwen/Qwen3.5-35B-A3B-FP8 -> /root (ephemeral)"
+        numactl --membind=0,1 hf download Qwen/Qwen3.5-35B-A3B-FP8 --local-dir /root/Qwen3.5-35B-A3B-FP8
+      fi
+      if [ ! -f /root/qwen35_35b_lora_alpha/adapter_config.json ]; then
+        log "downloading jybsuper/qwen35_35b_lora_alpha (private; needs HF_TOKEN) -> /root"
+        numactl --membind=0,1 hf download jybsuper/qwen35_35b_lora_alpha --local-dir /root/qwen35_35b_lora_alpha
+      fi
+      touch /root/.setup-done; log "setup complete"
+      SETUP
+      chmod +x /root/setup.sh
+      ( /root/setup.sh > /root/setup.log 2>&1 ) &
+      sleep infinity
+    env:
+    - name: PATH
+      value: "/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    - name: LD_LIBRARY_PATH
+      value: "/usr/local/nvidia/lib64"
+    - name: NVIDIA_DISABLE_REQUIRE
+      value: "true"
+    - name: MALLOC_TRIM_THRESHOLD_
+      value: "131072"
+    - name: HF_HUB_ENABLE_HF_TRANSFER
+      value: "1"
+    - name: HF_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: hf-token-yanbin
+          key: token
+          optional: true
+    resources:
+      requests:
+        nvidia.com/gpu: 4
+        memory: "100Gi"   # scheduling reservation only — keep small; the busy cluster's free nodes are tight
+        cpu: "8"
+        ephemeral-storage: "60Gi"
+      limits:
+        nvidia.com/gpu: 4
+        memory: "850Gi"
+        cpu: "64"
+        ephemeral-storage: "1500Gi"
+    volumeMounts:
+    - name: shm
+      mountPath: /dev/shm
+  volumes:
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 128Gi
