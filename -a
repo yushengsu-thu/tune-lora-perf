@@ -1,2 +1,0 @@
-FLASHINFER_PIN=0.6.11.post1   # must match the pinned image flashinfer-jit-cache (pod.yaml digest note)
-FLASHINFER_PIN=0.6.11.post1   # must match the pinned image flashinfer-jit-cache (pod.yaml digest note)
