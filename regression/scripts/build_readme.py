@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Generate a per-run README.md from a qwen35_35b-regression RUN_ROOT.
+"""Generate a per-run README.md from a regression RUN_ROOT (model auto-discovered via meta.env).
 
-Discovers cells automatically (any subdir under `qwen35/` with bench/acc/prompts/traces),
-pulls throughput from bench jsonls, sanity status from bench/bs*.sanity, and coherence
-from prompts.md.
+Discovers cells automatically (any subdir under <model>/ with bench/acc/prompts/traces),
+pulls throughput from bench jsonls, sanity status from bench/bs*.sanity (with a legacy
+fallback to grepping bs*.log), acc MAE from acc/acc_vs_*.txt when present, and coherence
+from prompts.md. Works on legacy kimi-regression / qwen35_35b-regression run folders too.
 
 Usage:
     python3 build_readme.py <RUN_ROOT> <RUN_TAG> <RESULTS_REPO>
 """
-import sys, json
+import sys, json, re
 from pathlib import Path
 
 
@@ -23,23 +24,26 @@ if len(sys.argv) != 4:
 RUN_ROOT = Path(sys.argv[1])
 RUN_TAG = sys.argv[2]
 RESULTS_REPO = sys.argv[3]
-QW = RUN_ROOT / "qwen35"
-if not QW.is_dir():
-    fail(f"no qwen35/ folder under {RUN_ROOT}")
 
-# meta.env (base_commit, variant_commit, layers, etc.)
+# ---- auto-discover the model dir: any RUN_ROOT subdir holding a meta.env ----
+cands = sorted(d for d in (RUN_ROOT.iterdir() if RUN_ROOT.is_dir() else []) if d.is_dir() and (d / "meta.env").exists())
+if not cands:
+    fail(f"no <model>/meta.env found under {RUN_ROOT}")
+MDL = cands[0]
+
+# meta.env (base_commit, variant_commit, model_display, layers, etc.)
 meta = {}
-mf = QW / "meta.env"
-if mf.exists():
-    for line in mf.read_text().splitlines():
-        if "=" in line and not line.startswith("#"):
-            k, v = line.split("=", 1)
-            meta[k.strip()] = v.strip()
+for line in (MDL / "meta.env").read_text().splitlines():
+    if "=" in line and not line.startswith("#"):
+        k, v = line.split("=", 1)
+        meta[k.strip()] = v.strip()
+DISPLAY = meta.get("model_display", MDL.name)
 
-# Discover cells: any subdir of qwen35/ that has at least one of bench/, acc/, prompts/, traces/.
+# Discover cells: any subdir of <model>/ that has at least one of bench/, acc/, prompts/, traces/.
+# (profile-only cells like variant_2stream_off have only traces/ and still belong in the README.)
 cells = sorted(
     d.name
-    for d in QW.iterdir()
+    for d in MDL.iterdir()
     if d.is_dir()
     and any((d / sub).exists() for sub in ("bench", "acc", "prompts", "traces"))
 )
@@ -56,7 +60,7 @@ cells.sort(key=_cell_sort_key)
 
 
 def tput(cell, bs):
-    p = QW / cell / "bench" / f"bs{bs}.jsonl"
+    p = MDL / cell / "bench" / f"bs{bs}.jsonl"
     if not p.exists():
         return None
     lines = [x for x in p.read_text().splitlines() if x.strip()]
@@ -69,20 +73,40 @@ def tput(cell, bs):
 
 
 def sanity_status(cell):
-    # run_qwen35.sh writes the serverlog_sanity verdict to bench/bs<N>.sanity (a file, not just the
-    # driver's stdout — so this column reflects the real verdict, unlike the kimi-regression README).
+    # run_regression.sh writes the serverlog_sanity verdict to bench/bs<N>.sanity (a FILE, so this
+    # column reflects the real verdict). Legacy kimi-regression runs only have it in bs<N>.log —
+    # fall back to grepping those.
     suspects = []
-    sanity_files = sorted((QW / cell / "bench").glob("bs*.sanity"))
-    for f in sanity_files:
+    sanity_files = sorted((MDL / cell / "bench").glob("bs*.sanity"))
+    if sanity_files:
+        for f in sanity_files:
+            if "SUSPECT" in f.read_text(errors="replace"):
+                suspects.append(f.stem)
+        return "OK" if not suspects else f"SUSPECT ({', '.join(suspects)})"
+    logs = sorted((MDL / cell / "bench").glob("bs*.log"))
+    if not logs:
+        return "no-sanity-files"
+    for f in logs:
         if "SUSPECT" in f.read_text(errors="replace"):
             suspects.append(f.stem)
-    if not sanity_files:
-        return "no-sanity-files"
-    return "OK" if not suspects else f"SUSPECT ({', '.join(suspects)})"
+    return ("OK" if not suspects else f"SUSPECT ({', '.join(suspects)})") + " (legacy log grep)"
+
+
+def acc_vs_files(cell):
+    """(label, mae, pearson) tuples for any acc_vs_*.txt in this cell (optional extra refs)."""
+    out = []
+    for p in sorted((MDL / cell / "acc").glob("acc_vs_*.txt")):
+        label = p.stem.replace("acc_vs_", "")
+        text = p.read_text(errors="replace")
+        mae = re.search(r"mean\|variant-base\|\s*=\s*([\d.]+)", text)
+        pear = re.search(r"pearson corr\s*=\s*([\d.]+)", text)
+        if mae and pear:
+            out.append((label, float(mae.group(1)), float(pear.group(1))))
+    return out
 
 
 def prompts_status(cell):
-    p = QW / cell / "prompts" / "prompts.md"
+    p = MDL / cell / "prompts" / "prompts.md"
     if not p.exists():
         return None
     text = p.read_text(errors="replace")
@@ -92,23 +116,28 @@ def prompts_status(cell):
 
 
 def trace_counts(cell):
-    on_dir = QW / cell / "traces" / "graph_on"
-    off_dir = QW / cell / "traces" / "graph_off"
+    # rglob, not glob — pull_traces() flattens directly under graph_{on,off}/, but ad-hoc
+    # tar-streamed pulls may preserve a timestamp subdir.
+    on_dir = MDL / cell / "traces" / "graph_on"
+    off_dir = MDL / cell / "traces" / "graph_off"
     on = len(list(on_dir.rglob("*.trace.json.gz"))) if on_dir.exists() else 0
     off = len(list(off_dir.rglob("*.trace.json.gz"))) if off_dir.exists() else 0
     return on, off
 
 
 def has_subdir(cell, sub):
-    return (QW / cell / sub).is_dir()
+    return (MDL / cell / sub).is_dir()
 
+
+# profile recipes (recorded in meta.env by the driver) for the trace-download blurb
+prof_on = (meta.get("prof_on", "") .split() + ["?", "?", "?", "?"])[:4]
+prof_off = (meta.get("prof_off", "").split() + ["?", "?", "?", "?"])[:4]
 
 # ----- assemble -----
 lines = []
 lines.append(f"# `{RUN_TAG}`")
 lines.append("")
-lines.append("Qwen3.5-35B-A3B-FP8 regression run produced by the `qwen35_35b-regression` skill")
-lines.append("(single node, tp4/ep4; launch flags from run_script.sh).")
+lines.append(f"{DISPLAY} regression run produced by the `regression` skill (`run_{meta.get('model', MDL.name)}.sh`).")
 lines.append(f"Cells: `{', '.join(cells)}`.")
 lines.append("")
 
@@ -117,9 +146,9 @@ lines.append("## Cells in this run")
 lines.append("")
 for c in cells:
     parts = []
-    cell_md = QW / c / "cell.md"
+    cell_md = MDL / c / "cell.md"
     if cell_md.exists():
-        parts.append(cell_md.read_text(errors="replace").strip())
+        parts.append(cell_md.read_text(errors="replace").strip())   # explicit description wins
     elif c == "base":
         parts.append(f"**no-LoRA control** on `{meta.get('base_commit','?')[:10]}` (src `{meta.get('base_src','?')}`)")
     elif c.startswith("base_"):
@@ -177,12 +206,14 @@ if "base" in cells and len(cells) > 1:
 # ---- Correctness ----
 lines.append("## Correctness")
 lines.append("")
-lines.append("| cell | bench sanity (bench vs server-log decode, <5%) | prompts (decode gate) |")
-lines.append("|---|---|---|")
+lines.append("| cell | bench sanity (bench vs server-log decode, <5%) | acc diffs | prompts (decode gate) |")
+lines.append("|---|---|---|---|")
 for c in cells:
     san = sanity_status(c) if has_subdir(c, "bench") else "—"
+    accs = acc_vs_files(c) if has_subdir(c, "acc") else []
+    accs_s = "; ".join(f"vs {lbl}: MAE {m:.3f}, pearson {p:.3f}" for lbl, m, p in accs) if accs else "—"
     pr = prompts_status(c) or "—"
-    lines.append(f"| `{c}` | {san} | {pr} |")
+    lines.append(f"| `{c}` | {san} | {accs_s} | {pr} |")
 lines.append("")
 lines.append("Acc (per-token logprob diff vs base) is in the run's `summary.md` (built by `summary.py`).")
 lines.append("")
@@ -190,13 +221,20 @@ lines.append("")
 # ---- Trace download ----
 lines.append("## Traces — separate GitHub Release")
 lines.append("")
-lines.append(f"All `.trace.json.gz` files for this run are attached to the release **`{RUN_TAG}`** in `{RESULTS_REPO}`. Each cell has its own tarball (`<cell>_traces.tar.gz`) containing `traces/graph_on/` (all 4 TP ranks, **bs64**, 24-step) and `traces/graph_off/` (rank-0 only, **bs16**, 12-step).")
+lines.append(f"All `.trace.json.gz` files for this run are attached to the release **`{RUN_TAG}`** in `{RESULTS_REPO}`. Each cell has its own tarball (`<cell>_traces.tar.gz`) containing `traces/graph_on/` (all TP ranks, bs{prof_on[0]}, {prof_on[2]}-step) and `traces/graph_off/` (rank-0 only, bs{prof_off[0]}, {prof_off[2]}-step).")
 lines.append("")
 lines.append("Download one cell's traces:")
 lines.append("")
 lines.append("```bash")
 lines.append(f"gh release download {RUN_TAG} --repo {RESULTS_REPO} --pattern '<cell>_traces.tar.gz'")
 lines.append("tar -xzf <cell>_traces.tar.gz")
+lines.append("```")
+lines.append("")
+lines.append("Download every cell's traces (the whole release):")
+lines.append("")
+lines.append("```bash")
+lines.append(f"gh release download {RUN_TAG} --repo {RESULTS_REPO}")
+lines.append("for t in *_traces.tar.gz; do tar -xzf \"$t\"; done")
 lines.append("```")
 lines.append("")
 lines.append("Open `.trace.json.gz` in `chrome://tracing` or [perfetto.dev/viewer](https://ui.perfetto.dev/).")
@@ -206,11 +244,12 @@ lines.append("")
 lines.append("## Files in this folder (`cells/<name>/`)")
 lines.append("")
 lines.append("- `acc/logprobs.json` — per-token logprobs from teacher-forced prefill over the adapter's `compare_sample_train_data.pt`.")
+lines.append("- `acc/acc_vs_<ref>.txt` — (optional) per-token diff vs a reference cell. Reports `mean|variant-base|` (MAE), `max|variant-base|`, and `pearson corr`.")
 lines.append("- `bench/bs<N>.jsonl` — `bench_one_batch_server` output for batch size N, in=out=2048 (last line has `output_throughput`, `latency`, …).")
 lines.append("- `bench/bs<N>.log` — full bench stdout (`--show-report` table inside).")
 lines.append("- `bench/bs<N>.serverlog` — sgl scheduler's own `Prefill/Decode batch ... gen throughput` lines (ground truth).")
 lines.append("- `bench/bs<N>.sanity` — `serverlog_sanity.py` verdict for that bench (OK / SUSPECT).")
-lines.append("- `prompts/prompts.md` — 8 prompts × 3 endpoints, base vs LoRA outputs side-by-side. Decode garbage (`!!!!` / `Thinking!!!!`) shows up here.")
+lines.append("- `prompts/prompts.md` — 8 prompts × 3 endpoints, base vs LoRA outputs side-by-side. Decode garbage (`!!!!`-collapse) shows up here.")
 lines.append("")
 
 print("\n".join(lines))

@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# Publish a finished kimi-regression run to a private GitHub repo + release.
+# Publish a finished regression run to a private GitHub repo + release (model-agnostic:
+# the model dir + tag prefix are discovered from the run's <model>/meta.env).
 #
 # What goes where (split by file size):
-#   - Tiny artifacts (~50 KB / run: acc/, bench/, prompts/, README.md) -> a NEW commit at
+#   - Tiny artifacts (acc/, bench/, prompts/, README.md) -> a NEW commit at
 #     <RESULTS_REPO>/runs/<RUN_TAG>/cells/<cell>/  (regular git, append-only history).
-#   - Big traces (~750 MB / run: traces/graph_{on,off}/*.trace.json.gz) -> a NEW GitHub
-#     Release tagged <RUN_TAG>, one tarball per cell (`<cell>_traces.tar.gz`), 2 GB asset
-#     limit (well under), no per-repo cap.
+#   - Big traces (traces/graph_{on,off}/*.trace.json.gz) -> a NEW GitHub Release tagged
+#     <RUN_TAG>, one tarball per cell (`<cell>_traces.tar.gz`), 2 GB asset limit (well under).
 #
 # Each new run is APPEND-ONLY: a new folder + a new release. Previous runs/releases stay.
 #
 # Inputs (env):
-#   RUN_ROOT       (required) — local run folder, e.g. ~/Downloads/sglang_kimi_reg_<id>_<ts>
+#   RUN_ROOT       (required) — local run folder, e.g. ~/Downloads/sglang_<model>_reg_<id>_<ts>
 #   RESULTS_REPO   (required) — <owner>/<repo>, can be private; you must have push + release auth
-#   RUN_TAG        (optional) — defaults to: kimi-reg-<variant-shorthash>-<timestamp>
+#   RUN_TAG        (optional) — defaults to: <tag_prefix>-<variant-shorthash>-<timestamp>
+#                               (tag_prefix from meta.env, e.g. kimi-reg / qwen35-reg)
 #   RESULTS_LOCAL  (optional) — local clone path, defaults to ~/.cache/sglang-results-<repo>
 #   PUBLISH_DRY    (optional) — set to 1 to skip git push + gh release create (everything else runs)
 #
@@ -21,20 +22,28 @@
 #   - `gh` CLI authenticated (`gh auth status`); push rights to RESULTS_REPO; org allows releases.
 set -euo pipefail
 
-: "${RUN_ROOT:?must set RUN_ROOT (the local kimi-regression run folder)}"
-: "${RESULTS_REPO:?must set RESULTS_REPO (e.g. yanbin-jiang/sglang-kimi-regression)}"
-[ -d "$RUN_ROOT/kimi" ] || { echo "publish: no kimi/ under $RUN_ROOT" >&2; exit 1; }
+: "${RUN_ROOT:?must set RUN_ROOT (the local regression run folder)}"
+: "${RESULTS_REPO:?must set RESULTS_REPO (e.g. <owner>/<results-repo>)}"
 
-# Read meta.env to grab the variant commit shorthash (drives the default tag)
-META="$RUN_ROOT/kimi/meta.env"
-variant_commit=""
-[ -f "$META" ] && variant_commit=$(grep -E '^variant_commit=' "$META" | head -1 | cut -d= -f2 || true)
+# ---- discover the model dir: the RUN_ROOT subdir holding meta.env ----
+MODEL_OUT=""
+for d in "$RUN_ROOT"/*/; do
+  [ -f "${d}meta.env" ] && { MODEL_OUT="${d%/}"; break; }
+done
+[ -n "$MODEL_OUT" ] || { echo "publish: no <model>/meta.env under $RUN_ROOT" >&2; exit 1; }
+META="$MODEL_OUT/meta.env"
+MODEL_NAME=$(basename "$MODEL_OUT")
+
+# Read meta.env: variant commit shorthash + tag prefix drive the default tag
+variant_commit=$(grep -E '^variant_commit=' "$META" | head -1 | cut -d= -f2 || true)
+tag_prefix=$(grep -E '^tag_prefix=' "$META" | head -1 | cut -d= -f2 || true)
+[ -z "$tag_prefix" ] && tag_prefix="${MODEL_NAME}-reg"
 
 TS=$(basename "$RUN_ROOT" | sed -nE 's/.*_([0-9]{8}_[0-9]{6})$/\1/p')
 [ -z "$TS" ] && TS="$(date +%Y%m%d_%H%M%S)"
 VSHORT="${variant_commit:0:10}"
 [ -z "$VSHORT" ] && VSHORT="unknown"
-DEFAULT_TAG="kimi-reg-${VSHORT}-${TS}"
+DEFAULT_TAG="${tag_prefix}-${VSHORT}-${TS}"
 RUN_TAG="${RUN_TAG:-$DEFAULT_TAG}"
 
 # Tag must be a valid git ref + DNS-safe asset prefix
@@ -46,6 +55,7 @@ repo_safe=$(echo "$RESULTS_REPO" | tr '/' '_')
 RESULTS_LOCAL="${RESULTS_LOCAL:-$HOME/.cache/sglang-results-${repo_safe}}"
 SKILL_SCRIPTS="$(cd "$(dirname "$0")" && pwd)"
 
+echo "publish: MODEL=$MODEL_NAME"
 echo "publish: RUN_TAG=$RUN_TAG"
 echo "publish: RESULTS_REPO=$RESULTS_REPO"
 echo "publish: RESULTS_LOCAL=$RESULTS_LOCAL"
@@ -75,19 +85,19 @@ echo "publish: README -> $RUN_DIR/README.md ($(wc -l <"$RUN_DIR/README.md") line
 # ---- 3. Copy small artifacts (everything except traces) into runs/<tag>/cells/ ----
 mkdir -p "$RUN_DIR/cells"
 # rsync excludes traces dir entirely (those go to the release)
-rsync -a --exclude='traces/' --exclude='meta.env' --exclude='kimi.out' --exclude='progress.log' \
-      "$RUN_ROOT/kimi/" "$RUN_DIR/cells/"
+rsync -a --exclude='traces/' --exclude='meta.env' --exclude='*.out' --exclude='progress.log' \
+      "$MODEL_OUT/" "$RUN_DIR/cells/"
 # Keep meta.env at the run-folder level (useful for re-running build_readme.py later)
-[ -f "$META" ] && cp "$META" "$RUN_DIR/meta.env"
+cp "$META" "$RUN_DIR/meta.env"
 
 small_bytes=$(du -sk "$RUN_DIR" | awk '{print $1}')
 echo "publish: small-files staged for commit: $((small_bytes)) KB at $RUN_DIR"
 
 # ---- 4. Tar traces per cell -> staging dir for the release ----
-TRACES_STAGE=$(mktemp -d -t kimi-traces-XXXXXX)
+TRACES_STAGE=$(mktemp -d -t reg-traces-XXXXXX)
 trap 'rm -rf "$TRACES_STAGE"' EXIT
 trace_assets=()
-for cell_path in "$RUN_ROOT/kimi"/*/; do
+for cell_path in "$MODEL_OUT"/*/; do
   cell=$(basename "$cell_path")
   if [ -d "$cell_path/traces" ] && [ -n "$(find "$cell_path/traces" -name '*.trace.json.gz' -print -quit 2>/dev/null)" ]; then
     out="$TRACES_STAGE/${cell}_traces.tar.gz"
@@ -102,16 +112,16 @@ done
 if [ "${PUBLISH_DRY:-0}" = "1" ]; then
   echo "publish: PUBLISH_DRY=1 — skipping git push and gh release create"
   echo "publish: (would commit) $RUN_DIR -> $RESULTS_REPO main"
-  echo "publish: (would upload) ${trace_assets[*]} -> release $RUN_TAG"
+  echo "publish: (would upload) ${trace_assets[*]:-<none>} -> release $RUN_TAG"
   exit 0
 fi
 
 (
   cd "$RESULTS_LOCAL"
   git add "runs/$RUN_TAG"
-  git -c "user.name=$(git config user.name || echo kimi-regression-bot)" \
+  git -c "user.name=$(git config user.name || echo regression-bot)" \
       -c "user.email=$(git config user.email || echo regression@local)" \
-      commit -m "$RUN_TAG: kimi-regression run
+      commit -m "$RUN_TAG: $MODEL_NAME regression run
 
 Cells: $(ls -1 "$RUN_DIR/cells" | tr '\n' ' ')
 Traces in release: $RUN_TAG"
