@@ -170,7 +170,7 @@ SGLANG_ENABLE_TP_MEMORY_INBALANCE_CHECK=false PYTORCH_CUDA_ALLOC_CONF=expandable
 **REMOVED at HEAD — do NOT use (stale in older runs/scripts):** `SGLANG_LORA_TWO_STREAM` (overlap now always-on), `SGLANG_OPT_FP4_LORA_SKIP_PERMUTE_MEMSET` (always-on), `SGLANG_LORA_OVERLAP_DOWN` / `_overlap_down` (down-overlap deleted: perf-dead + garbage; main-alloc does NOT fix it — it's the side-stream NCCL all-reduce + act_ready_event, not a buffer WAR), `SGLANG_OPT_LORA_SIDE_STREAM_POOL_SIZE` (pool deleted — superseded by MAIN_ALLOC).
 
 **Backend launch flags:**
-- trtllm LoRA (the candidate): `--moe-runner-backend sgl_flashinfer_trtllm --enable-lora --max-loras-per-batch 1 --max-lora-rank 32 --lora-backend triton --lora-use-virtual-experts --lora-paths alpha=/data/kimi_k25_lora_alpha`
+- trtllm LoRA (the candidate): `--moe-runner-backend sgl_flashinfer_trtllm --enable-lora --max-loras-per-batch 1 --max-lora-rank 32 --lora-backend triton --lora-use-virtual-experts --lora-paths alpha=/root/kimi_k25_lora_alpha`
 - cutlass LoRA (the **gold** reference): `--moe-runner-backend flashinfer_cutlass` + the same LoRA flags. **Requires the `nvfp4-cutlass-lora@1be14567e0` branch** (its cutlass MoE-LoRA two-stream impl) on the cutlass pods — stock cutlass raises `NotImplementedError: LoRA MoE not supported for MoeRunnerBackend.FLASHINFER_CUTLASS`.
 - base (no-LoRA): drop all `--*lora*` flags and the opt-stack envs (keep the MNNVL group).
 
@@ -415,19 +415,6 @@ kubectl delete computedomain mnnvl-kimi-${ID}-compute-domain --ignore-not-found
 ```
 
 ## Operational notes
-- **Pod env (baked into `kimi-2node.yaml`, both head+worker):** each pod runs `privileged: true` +
-  `SYS_PTRACE`/`SYS_ADMIN` (so `py-spy dump`, `nsys`, `gdb` work in-pod). Three hostPath mounts on the
-  **node's local big disk** (`leira` nodes = a dedicated `/mnt/nvme-b` raid0 ~5T built from the 3 spare
-  1.7T NVMe; the 123G `/` is system-only and the older 1.7T `/mnt/nvme` also backs the containerd overlay):
-  `/root/.cache` ← `/mnt/nvme-b/sglang-dot-cache` (persistent, **per-node, never shared/NFS** → the ~20-min
-  cold `fp4_gemm` autotune + triton/torch JIT survive pod deletes and can't contend cross-node, robustness
-  #1/#2), `/data` ← `/mnt/nvme-b` (big scratch, `type: Directory` so a pod **won't start** if the raid
-  isn't mounted — fail loud, never silently fall back to the system disk), `/host` ← `/` (escape hatch).
-  **Model + LoRA weights also persist on `/data`:** `setup.sh` downloads `nvidia/Kimi-K2.5-NVFP4` →
-  `/data/Kimi-K2.5-NVFP4` and the adapter → `/data/kimi_k25_lora_alpha` (under an `flock` on
-  `/data/.kimi-download.lock` so a concurrent same-node run waits instead of clobbering), and `run_kimi.sh`'s
-  `MODEL_PATH`/`LORA_PATH` point there — so pod recreations on a node reuse the weights, no multi-hundred-GB
-  re-download. (Within one run head+worker are on different nodes → they still download in parallel.)
 - **Ghost GPU memory is page cache, not a leak** (GB200 exposes HBM as cpu-less NUMA). Prevented by
   `numactl --membind=0,1` on downloads + launch; cleaned by the §3 `drop_caches`. Applied identically to
   both cells so it can't bias the comparison.

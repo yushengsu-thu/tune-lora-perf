@@ -59,10 +59,6 @@ spec:
   - name: sglang
     image: lmsysorg/sglang:dev-cu13
     imagePullPolicy: Always
-    securityContext:
-      privileged: true                      # py-spy / nsys / gdb need it; also lets us mount inside
-      capabilities:
-        add: ["SYS_PTRACE", "SYS_ADMIN"]
     command:
     - /bin/sh
     - -c
@@ -85,21 +81,18 @@ spec:
         log "cloning sglang"; rm -rf /root/sglang && git clone https://github.com/sgl-project/sglang /root/sglang; cd /root/sglang
       fi
       log "pip install -e /root/sglang/python (a few minutes)"; cd /root/sglang && pip install -e python
-      # NVFP4 base must come from a real directory (NOT the HF-cache symlink layout). Download to
-      # /data (the node's persistent big disk) so pod recreations reuse it. /data is shared across runs
-      # on this node, so an flock makes a concurrent same-node run WAIT instead of clobbering the dir.
-      mkdir -p /data/Kimi-K2.5-NVFP4 /data/kimi_k25_lora_alpha
-      (
-        flock 9
-        if [ ! -f /data/Kimi-K2.5-NVFP4/config.json ]; then
-          log "downloading nvidia/Kimi-K2.5-NVFP4 -> /data (persistent)"
-          numactl --membind=0,1 hf download nvidia/Kimi-K2.5-NVFP4 --local-dir /data/Kimi-K2.5-NVFP4
-        else log "reusing cached /data/Kimi-K2.5-NVFP4"; fi
-        if [ ! -f /data/kimi_k25_lora_alpha/adapter_config.json ]; then
-          log "downloading jybsuper/kimi_k25_lora_alpha (private; needs HF_TOKEN) -> /data"
-          numactl --membind=0,1 hf download jybsuper/kimi_k25_lora_alpha --local-dir /data/kimi_k25_lora_alpha
-        else log "reusing cached /data/kimi_k25_lora_alpha"; fi
-      ) 9>/data/.kimi-download.lock
+      # NVFP4 base must come from a real directory (NOT the HF-cache symlink layout).
+      mkdir -p /root/Kimi-K2.5-NVFP4 /root/kimi_k25_lora_alpha
+      if [ ! -f /root/Kimi-K2.5-NVFP4/config.json ]; then
+        log "downloading nvidia/Kimi-K2.5-NVFP4"
+        numactl --membind=0,1 hf download nvidia/Kimi-K2.5-NVFP4 --local-dir /root/Kimi-K2.5-NVFP4 & m=$!
+      fi
+      if [ ! -f /root/kimi_k25_lora_alpha/adapter_config.json ]; then
+        log "downloading jybsuper/kimi_k25_lora_alpha (private; needs HF_TOKEN)"
+        numactl --membind=0,1 hf download jybsuper/kimi_k25_lora_alpha --local-dir /root/kimi_k25_lora_alpha & l=$!
+      fi
+      [ -n "${m:-}" ] && wait $m
+      [ -n "${l:-}" ] && wait $l
       touch /root/.setup-done; log "setup complete"
       SETUP
       chmod +x /root/setup.sh
@@ -142,34 +135,11 @@ spec:
     volumeMounts:
     - name: shm
       mountPath: /dev/shm
-    # Persistent, PER-NODE JIT/autotune cache (flashinfer fp4_gemm ~20min cold-tune, triton, torch
-    # inductor, HF hub). hostPath on the node's local big disk -> survives pod delete AND is single-machine
-    # (never a shared/NFS mount), so cross-node JIT compiles can't contend. See robustness #1/#2.
-    - name: dot-cache
-      mountPath: /root/.cache
-    # The node's big local NVMe disk (1.7T, ext4) for large scratch / artifacts.
-    - name: data
-      mountPath: /data
-    # Escape hatch: the whole host filesystem, in case a node dir needs to be reached that wasn't mounted.
-    - name: host-root
-      mountPath: /host
   volumes:
   - name: shm
     emptyDir:
       medium: Memory
       sizeLimit: 32Gi
-  - name: dot-cache
-    hostPath:
-      path: /mnt/nvme-b/sglang-dot-cache   # dedicated raid0 big disk; subdir created on first use
-      type: DirectoryOrCreate
-  - name: data
-    hostPath:
-      path: /mnt/nvme-b                     # dedicated raid0 big disk (3x1.7T spares); MUST be mounted
-      type: Directory
-  - name: host-root
-    hostPath:
-      path: /
-      type: Directory
 ---
 apiVersion: v1
 kind: Pod
@@ -204,10 +174,6 @@ spec:
   - name: sglang
     image: lmsysorg/sglang:dev-cu13
     imagePullPolicy: Always
-    securityContext:
-      privileged: true                      # py-spy / nsys / gdb need it; also lets us mount inside
-      capabilities:
-        add: ["SYS_PTRACE", "SYS_ADMIN"]
     command:
     - /bin/sh
     - -c
@@ -227,18 +193,15 @@ spec:
         rm -rf /root/sglang && git clone https://github.com/sgl-project/sglang /root/sglang; cd /root/sglang
       fi
       cd /root/sglang && pip install -e python
-      mkdir -p /data/Kimi-K2.5-NVFP4 /data/kimi_k25_lora_alpha
-      (
-        flock 9
-        if [ ! -f /data/Kimi-K2.5-NVFP4/config.json ]; then
-          log "downloading nvidia/Kimi-K2.5-NVFP4 -> /data (persistent)"
-          numactl --membind=0,1 hf download nvidia/Kimi-K2.5-NVFP4 --local-dir /data/Kimi-K2.5-NVFP4
-        else log "reusing cached /data/Kimi-K2.5-NVFP4"; fi
-        if [ ! -f /data/kimi_k25_lora_alpha/adapter_config.json ]; then
-          log "downloading jybsuper/kimi_k25_lora_alpha (private; needs HF_TOKEN) -> /data"
-          numactl --membind=0,1 hf download jybsuper/kimi_k25_lora_alpha --local-dir /data/kimi_k25_lora_alpha
-        else log "reusing cached /data/kimi_k25_lora_alpha"; fi
-      ) 9>/data/.kimi-download.lock
+      mkdir -p /root/Kimi-K2.5-NVFP4 /root/kimi_k25_lora_alpha
+      if [ ! -f /root/Kimi-K2.5-NVFP4/config.json ]; then
+        numactl --membind=0,1 hf download nvidia/Kimi-K2.5-NVFP4 --local-dir /root/Kimi-K2.5-NVFP4 & m=$!
+      fi
+      if [ ! -f /root/kimi_k25_lora_alpha/adapter_config.json ]; then
+        numactl --membind=0,1 hf download jybsuper/kimi_k25_lora_alpha --local-dir /root/kimi_k25_lora_alpha & l=$!
+      fi
+      [ -n "${m:-}" ] && wait $m
+      [ -n "${l:-}" ] && wait $l
       touch /root/.setup-done; log "setup complete"
       SETUP
       chmod +x /root/setup.sh
@@ -281,31 +244,8 @@ spec:
     volumeMounts:
     - name: shm
       mountPath: /dev/shm
-    # Persistent, PER-NODE JIT/autotune cache (flashinfer fp4_gemm ~20min cold-tune, triton, torch
-    # inductor, HF hub). hostPath on the node's local big disk -> survives pod delete AND is single-machine
-    # (never a shared/NFS mount), so cross-node JIT compiles can't contend. See robustness #1/#2.
-    - name: dot-cache
-      mountPath: /root/.cache
-    # The node's big local NVMe disk (1.7T, ext4) for large scratch / artifacts.
-    - name: data
-      mountPath: /data
-    # Escape hatch: the whole host filesystem, in case a node dir needs to be reached that wasn't mounted.
-    - name: host-root
-      mountPath: /host
   volumes:
   - name: shm
     emptyDir:
       medium: Memory
       sizeLimit: 32Gi
-  - name: dot-cache
-    hostPath:
-      path: /mnt/nvme-b/sglang-dot-cache   # dedicated raid0 big disk; subdir created on first use
-      type: DirectoryOrCreate
-  - name: data
-    hostPath:
-      path: /mnt/nvme-b                     # dedicated raid0 big disk (3x1.7T spares); MUST be mounted
-      type: Directory
-  - name: host-root
-    hostPath:
-      path: /
-      type: Directory

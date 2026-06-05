@@ -20,8 +20,8 @@ ID="${ID:?export ID=<dns-safe-identifier> (names the pods: mnnvl-kimi-<ID>-0/1)}
 HEAD_POD=mnnvl-kimi-${ID}-0
 WORKER_POD=mnnvl-kimi-${ID}-1
 DIST_INIT=mnnvl-kimi-${ID}-0.mnnvl-kimi-${ID}-head:20000
-MODEL_PATH=/data/Kimi-K2.5-NVFP4         # persistent per-node big disk (see kimi-2node.yaml /data mount)
-LORA_PATH=/data/kimi_k25_lora_alpha
+MODEL_PATH=/root/Kimi-K2.5-NVFP4
+LORA_PATH=/root/kimi_k25_lora_alpha
 LORA_NAME=alpha
 MAX_LORA_RANK=32
 PORT=30000
@@ -81,7 +81,7 @@ checkout(){
 }
 
 # Pre-warm the HF dynamic-module cache so 4 ranks/node don't race copying trust_remote_code *.py.
-prewarm(){ for P in "$WORKER_POD" "$HEAD_POD"; do kubectl exec "$P" -- bash -lc 'python3 -c "from transformers import AutoConfig,AutoTokenizer,AutoProcessor as P; m=\"/data/Kimi-K2.5-NVFP4\"; AutoConfig.from_pretrained(m,trust_remote_code=True); AutoTokenizer.from_pretrained(m,trust_remote_code=True); P.from_pretrained(m,trust_remote_code=True)" 2>/dev/null; echo "prewarmed $P"'; done; }
+prewarm(){ for P in "$WORKER_POD" "$HEAD_POD"; do kubectl exec "$P" -- bash -lc 'python3 -c "from transformers import AutoConfig,AutoTokenizer,AutoProcessor as P; m=\"/root/Kimi-K2.5-NVFP4\"; AutoConfig.from_pretrained(m,trust_remote_code=True); AutoTokenizer.from_pretrained(m,trust_remote_code=True); P.from_pretrained(m,trust_remote_code=True)" 2>/dev/null; echo "prewarmed $P"'; done; }
 
 # ---- observable, patient wait_ready (cold autotune ~17-21min; cache shared across configs) ----
 wait_ready(){
