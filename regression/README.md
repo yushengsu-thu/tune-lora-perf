@@ -44,19 +44,19 @@ regression/
 │   ├── build_readme.py                # per-run README generator for publishing
 │   └── publish.sh                     # GitHub publish (small files → commit, traces → Release)
 │
-├── gb200/                             # ── GB200 platform (leira cluster) ──
-│   ├── run_Kimi-K2.5-NVFP4.sh                    # entry point: Kimi regression (2-node MNNVL)
-│   ├── run_Qwen3.5-35B-A3B-FP8.sh                  # entry point: Qwen3.5 regression (1 node)
+├── gb200/                             # ── GB200 platform (leira cluster — GONE; historical) ──
+│   ├── run_Kimi-K2.5-NVFP4.sh         # entry point: Kimi regression (2-node MNNVL)
+│   ├── run_Qwen3.5-35B-A3B-FP8.sh     # entry point: Qwen3.5 regression (1 node)
 │   └── models/
-│       ├── Kimi-K2.5-NVFP4/                      # model.env + pod.yaml + hooks.sh + MODEL.md
-│       └── Qwen3.5-35B-A3B-FP8/                    # (single pod + /mnt/nvme-b hostPath)
+│       ├── Kimi-K2.5-NVFP4/           # model.env + pod.yaml + hooks.sh + MODEL.md
+│       └── Qwen3.5-35B-A3B-FP8/       # (single pod + /mnt/nvme-b hostPath)
 │
 └── gb300/                             # ── GB300 platform (gcp-radixark-02 cluster, sm_103) ──
-    ├── run_Kimi-K2.5-NVFP4.sh                    # entry point: Kimi regression (2-node MNNVL via DRA)
-    ├── run_Qwen3.5-35B-A3B-FP8.sh                  # entry point: Qwen3.5 regression (1 node)
+    ├── run_Kimi-K2.5-NVFP4.sh         # entry point: Kimi regression (2-node MNNVL via DRA)
+    ├── run_Qwen3.5-35B-A3B-FP8.sh     # entry point: Qwen3.5 regression (1 node)
     └── models/
-        ├── Kimi-K2.5-NVFP4/                      # 2-node GKE pods (ComputeDomain; weights on 2.9T eph SSD)
-        └── Qwen3.5-35B-A3B-FP8/                    # GKE-adapted pod (stateful-partition mounts, cohort
+        ├── Kimi-K2.5-NVFP4/           # 2-node GKE pods (ComputeDomain; weights on eph SSD)
+        └── Qwen3.5-35B-A3B-FP8/       # GKE-adapted pod (stateful-partition mounts, cohort
             │                          #   toleration, 45-min cold-JIT timeout)
             └── broadcast_jit_cache.sh # fan a built JIT cache out to all GB300 nodes
 ```
