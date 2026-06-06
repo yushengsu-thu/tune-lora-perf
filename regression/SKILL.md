@@ -141,6 +141,10 @@ Model-specific items (cold-autotune timing, required envs, noise floors) are in 
 9. **`kubectl exec` streams silently TRUNCATE big files on network blips.** Every trace pull is
    gzip-verified and retried; persistent truncation falls back to a server-side
    `split -b 20m` + per-chunk size-verified pull + local reassembly.
+   For **node-to-node** bulk copies (JIT-cache broadcast) don't relay through the local machine
+   at all — exec streams are API-server-proxied at ~1-2MB/s; `broadcast_jit_cache.sh` (v2)
+   moves the data **in-cluster** over the pod network (source sync pod serves HTTP, targets
+   curl in parallel): 1.27GB → 16 nodes in minutes vs ~3h relayed (validated 2026-06-06).
 
 10. **bash 3.2 (macOS): never `local x=$1 y="${x}/…"` on one line under `set -u`** — all RHS
     evaluate before any LHS is in scope. `pull_traces` declares positionals first, derived paths

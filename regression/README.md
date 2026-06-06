@@ -253,7 +253,7 @@ KUBECONFIG=<gcp-radixark-02 kubeconfig> \
 | | |
 |---|---|
 | **Input** | the node that just built the cache (full name or suffix); auto-discovers all other schedulable GB300 nodes (skips `gpu-maintenance`-tainted and DiskPressure nodes) |
-| **Output** | `/mnt/stateful_partition/sglang-dot-cache` replicated to every target node, via nodeName-pinned sync pods + 20MB size-verified chunks |
+| **Output** | `/mnt/stateful_partition/sglang-dot-cache` replicated to every target node — **in-cluster direct transfer**: the source sync pod serves the tarball over the pod network (HTTP), all targets pull **in parallel** with size+gzip verification; data never leaves the cluster (validated 2026-06-06: 1.27GB → 16 nodes in minutes, vs ~3h for the old local-relayed 20MB-chunk path) |
 
 ### `prompts_check.py` — ad-hoc decode health check on any live server
 
