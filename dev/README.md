@@ -48,7 +48,7 @@ fp4 autotune ~10-25 min on EVERY launch).
 | | |
 |---|---|
 | input | model name; optional `ID=<dns-safe-id>` (default `date +%Y%m%d-%H%M%S`) |
-| does | `kubectl apply` the regression pod yaml (qwen: 1 pod `sglang-gb300-qwen3vl-yushengsu-<ID>`; kimi: 2 pods + ComputeDomain/MNNVL), wait Ready, wait `/root/.setup-done` (weights + base install) |
+| does | **free-node pre-check** (the pod requests a full node's 4 GPUs, so the K8s scheduler auto-places it on an empty GB300 node; the pre-check fails fast instead of hanging Pending when none is free) → `kubectl apply` the regression pod yaml (qwen: 1 pod `sglang-gb300-qwen3vl-yushengsu-<ID>`; kimi: 2 pods + ComputeDomain/MNNVL, anti-affinity forces two different nodes), wait Ready, wait `/root/.setup-done` (weights + base install) |
 | output | running pod(s); `dev/.state/<model>.env` with the pod `ID` |
 | verify | pod Ready + setup-done on every pod + ≥4 GPUs visible per pod |
 

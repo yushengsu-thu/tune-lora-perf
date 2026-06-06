@@ -10,6 +10,36 @@ ID="${ID:-$(date +%Y%m%d-%H%M%S)}"
 set_pods
 echo "== [1/launch] $MODEL  ID=$ID  pods: ${PODS[*]}"
 
+# Fail fast if the cluster has no free node: the scheduler places the pod (it requests a full
+# node's 4 GPUs, so only an empty GB300 node fits) — pre-count candidates instead of letting
+# the pod sit Pending until the kubectl-wait timeout.
+echo "-- free-node check (need ${NNODES} empty GB300 node(s))"
+FREE=$( { $KC get nodes -o json; $KC get pods --all-namespaces -o json; } | python3 -c '
+import json, sys
+docs = json.loads("[" + sys.stdin.read().replace("}\n{", "},{") + "]")
+nodes, pods = docs[0]["items"], docs[1]["items"]
+used = {}
+for p in pods:
+    if p["status"].get("phase") in ("Succeeded", "Failed"): continue
+    n = p["spec"].get("nodeName")
+    if not n: continue
+    g = sum(int(c.get("resources", {}).get("requests", {}).get("nvidia.com/gpu", 0))
+            for c in p["spec"].get("containers", []))
+    used[n] = used.get(n, 0) + g
+free = []
+for n in nodes:
+    if n["metadata"]["labels"].get("cloud.google.com/gke-accelerator") != "nvidia-gb300": continue
+    if any(t.get("key") == "gpu-maintenance" for t in n["spec"].get("taints", [])): continue
+    if any(c["type"] == "Ready" and c["status"] != "True" for c in n["status"].get("conditions", [])): continue
+    cap = int(n["status"].get("allocatable", {}).get("nvidia.com/gpu", 0))
+    name = n["metadata"]["name"]
+    if cap - used.get(name, 0) >= 4: free.append(name)
+print(len(free))
+for f in free[:6]: print("  " + f, file=sys.stderr)
+' )
+echo "   free nodes: ${FREE}"
+[ "${FREE:-0}" -ge "$NNODES" ] || { echo "ERROR: need ${NNODES} empty GB300 node(s), only ${FREE} free — try later or free one up"; exit 1; }
+
 # pod spec: reuse the validated regression pack yaml (single source of truth)
 sed "s/\${ID}/${ID}/g" "${PACK}/pod.yaml" | $KC apply -f -
 
