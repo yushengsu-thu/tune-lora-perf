@@ -14,19 +14,22 @@ This file only records the GB300 deltas.
 
 | | `qwen35` (GB200, leira) | `qwen35_gb300` (GB300, gcp-radixark-02) |
 |---|---|---|
-| pod.yaml | `runtimeClassName: nvidia-legacy`, privileged, `/data` + `/root/.cache` hostPath (persistent weights + JIT cache) | no runtimeClass, no privileged, **no hostPath** — weights re-download to ephemeral `/root` per pod; JIT cache cold per pod |
-| MODEL_PATH / LORA_PATH | `/data/...` | `/root/...` |
+| pod.yaml | `runtimeClassName: nvidia-legacy`, privileged, hostPath on `/mnt/nvme-b` (big dedicated raid) | no runtimeClass, no privileged, hostPath on **`/mnt/stateful_partition`** (the node's 95G persistent NVMe partition): `/root/.cache` (JIT — kills the >30-min cold sm_103 build on relaunches) + `/data` (weights — no re-download/relay per pod). Wiped only on node re-image. **Disk budget is tight:** model 40G + adapter 2.4G + JIT cache on a 95G partition — don't park other large artifacts there. |
+| MODEL_PATH / LORA_PATH | `/data/...` | `/data/...` (same paths now) |
 | pod name | `sglang-qwen35-<ID>` | `sglang-qwen35gb300-<ID>` |
 | serving config | identical (PR #27329 launch: tp4/ep4, graph-max-bs 128, experimental_sgl_trtllm variant cell) | identical |
+| scheduling | — | needs the `radixark.io/cohort=true:NoSchedule` toleration (free nodes carry it); keep requests small (busy cluster) |
 
 ## GB300-specific notes
 
 - The `hf-token-yanbin` secret must exist on the cluster for the private LoRA download
   (copy it from leira: read the token there, `kubectl --context gcp-radixark-02 create secret
-  generic hf-token-yanbin --from-literal=token=...`).
-- Cold setup is slower than leira: ~40 GB model download + full JIT warmup on every fresh pod
-  (no persistent caches). Budget `READY_TIMEOUT_MIN=30` still holds but the FIRST launch pays
-  the full deep_gemm JIT.
+  generic hf-token-yanbin --from-literal=token=...`). **Without it**: the base model still
+  downloads (public) and setup completes; relay the adapter ONCE per node from a leira pod
+  (20MB verified chunks — plain `kubectl cp`/`exec | tar` streams TRUNCATE multi-GB files) into
+  `/data/qwen35_35b_lora_alpha/`; it persists on the node afterwards.
+- First-ever run on a node pays ~40 GB model download + the full cold JIT; **subsequent pods on
+  the same node reuse both** via the `/mnt/stateful_partition` hostPath mounts.
 - sm_103 kernel support depends on the image/flashinfer build — if a cell crashes during JIT
   warmup with an arch error, that's image/commit skew (SKILL.md operational notes), not a
   harness failure.

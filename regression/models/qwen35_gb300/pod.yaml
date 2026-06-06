@@ -5,8 +5,10 @@
 # (taken from working pods on that cluster):
 #   * NO runtimeClassName (GKE; no `nvidia-legacy` class there)
 #   * NO privileged/securityContext (cluster pods run without it; torch profiler works)
-#   * NO hostPath mounts — no /mnt/nvme-b on these nodes: weights download to the pod's
-#     ephemeral /root (re-downloaded on pod recreation; JIT cache is cold per pod)
+#   * hostPath on /mnt/stateful_partition (the node's 95G persistent NVMe partition — survives
+#     pod deletion, wiped only on node re-image): /root/.cache (JIT/autotune cache: deep_gemm,
+#     flashinfer, triton, and the PR's trtllm_lora_temp build — kills the >30-min cold sm_103
+#     JIT on relaunches) and /data (model + LoRA weights — kills the per-pod re-download/relay)
 #   * shm 128Gi, memory limit 850Gi (per the cluster's working pods)
 apiVersion: v1
 kind: Pod
@@ -61,16 +63,20 @@ spec:
         log "cloning sglang"; rm -rf /root/sglang && git clone https://github.com/sgl-project/sglang /root/sglang; cd /root/sglang
       fi
       log "pip install -e /root/sglang/python (a few minutes)"; cd /root/sglang && pip install -e python
-      # Ephemeral /root (no big hostPath disk on these GKE nodes) — re-downloaded per pod.
-      mkdir -p /root/Qwen3.5-35B-A3B-FP8 /root/qwen35_35b_lora_alpha
-      if [ ! -f /root/Qwen3.5-35B-A3B-FP8/config.json ]; then
-        log "downloading Qwen/Qwen3.5-35B-A3B-FP8 -> /root (ephemeral)"
-        numactl --membind=0,1 hf download Qwen/Qwen3.5-35B-A3B-FP8 --local-dir /root/Qwen3.5-35B-A3B-FP8
-      fi
-      if [ ! -f /root/qwen35_35b_lora_alpha/adapter_config.json ]; then
-        log "downloading jybsuper/qwen35_35b_lora_alpha (private; needs HF_TOKEN) -> /root"
-        numactl --membind=0,1 hf download jybsuper/qwen35_35b_lora_alpha --local-dir /root/qwen35_35b_lora_alpha
-      fi
+      # Weights persist on /data (hostPath -> the node's stateful partition) so pod recreations
+      # on the same node reuse them; flock makes a concurrent same-node run WAIT, not clobber.
+      mkdir -p /data/Qwen3.5-35B-A3B-FP8 /data/qwen35_35b_lora_alpha
+      (
+        flock 9
+        if [ ! -f /data/Qwen3.5-35B-A3B-FP8/config.json ]; then
+          log "downloading Qwen/Qwen3.5-35B-A3B-FP8 -> /data (persistent)"
+          numactl --membind=0,1 hf download Qwen/Qwen3.5-35B-A3B-FP8 --local-dir /data/Qwen3.5-35B-A3B-FP8
+        else log "reusing cached /data/Qwen3.5-35B-A3B-FP8"; fi
+        if [ ! -f /data/qwen35_35b_lora_alpha/adapter_config.json ]; then
+          log "downloading jybsuper/qwen35_35b_lora_alpha (private; needs HF_TOKEN; OK to fail — relay the adapter instead, see MODEL.md)"
+          numactl --membind=0,1 hf download jybsuper/qwen35_35b_lora_alpha --local-dir /data/qwen35_35b_lora_alpha || true
+        else log "reusing cached /data/qwen35_35b_lora_alpha"; fi
+      ) 9>/data/.qwen35-download.lock
       touch /root/.setup-done; log "setup complete"
       SETUP
       chmod +x /root/setup.sh
@@ -107,8 +113,23 @@ spec:
     volumeMounts:
     - name: shm
       mountPath: /dev/shm
+    # Persistent PER-NODE JIT/autotune cache (deep_gemm, flashinfer, triton, trtllm_lora_temp).
+    # Survives pod delete -> a relaunch on the SAME node skips the >30-min cold sm_103 JIT.
+    - name: dot-cache
+      mountPath: /root/.cache
+    # Persistent per-node weights (model + LoRA) — no re-download/relay on pod recreation.
+    - name: data
+      mountPath: /data
   volumes:
   - name: shm
     emptyDir:
       medium: Memory
       sizeLimit: 128Gi
+  - name: dot-cache
+    hostPath:
+      path: /mnt/stateful_partition/sglang-dot-cache
+      type: DirectoryOrCreate
+  - name: data
+    hostPath:
+      path: /mnt/stateful_partition/sglang-data
+      type: DirectoryOrCreate
