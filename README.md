@@ -38,7 +38,7 @@ tune-lora-perf/
 
 | dir | use it when | docs |
 |---|---|---|
-| [`dev/`](dev/README.md) | **iterating on local sglang code** — one command (`run_all.sh qwen\|kimi`) launches a GB300 node, uploads your current branch, runs LoRA-vs-no-LoRA benchmark + accuracy (incl. the vLLM-reference comparison) + torch profiles, and publishes results to GitHub. Steps are standalone and individually rerunnable. | [`dev/README.md`](dev/README.md) |
+| [`dev/`](dev/README.md) | **iterating on local sglang code** — one command (`run_all.sh <model>`) launches a GB300 node, uploads your current branch, runs LoRA-vs-no-LoRA benchmark + accuracy (incl. the vLLM-reference comparison) + torch profiles, and publishes results to GitHub. Model-general: each model is a `dev/models/${MODEL_NAME}-${PRECISION}/model.env` pack. Steps are standalone and individually rerunnable. | [`dev/README.md`](dev/README.md) |
 | [`regression/`](regression/README.md) | **gating a serving change** (a LoRA toggle, backend swap, env var, a PR) — one model-agnostic driver runs all four tests (accuracy / performance / prompt-check / profiling) on a **base vs variant** pair with hardened launch/pull mechanics and a 5-metric report. Validated e2e on GB200 + GB300 (2026-06-06). | [`regression/README.md`](regression/README.md) (manual steps) + [`regression/SKILL.md`](regression/SKILL.md) (operating manual + robustness rules) |
 | [`e2e_test_scripts/`](e2e_test_scripts/README.md) | **reproducing the full e2e matrix** from `E2E_FULL_TEST_RUNBOOK.md` (coherence + bench bs16–128 + gsm8k, PR vs oss lanes) — per-cluster runners + pod YAMLs, shared pod helpers. `gb300/` is active; `gb200/` is historical (leira is gone). | [`e2e_test_scripts/README.md`](e2e_test_scripts/README.md) |
 
@@ -58,7 +58,7 @@ tune-lora-perf/
 
 ```bash
 # fast dev loop on GB300 (full chain, ~2-5h; steps also run standalone):
-bash dev/run_all.sh qwen          # or: kimi  (shorthands for the full model names)
+bash dev/run_all.sh qwen          # any dev/models/ dir name or unique prefix; or: all
 
 # base-vs-variant regression (read regression/README.md §3 for the step-by-step):
 DRY_RUN=1 bash regression/gb300/run_Qwen3.5-35B-A3B-FP8.sh   # preview launch surface

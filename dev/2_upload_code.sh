@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # 2. Upload the dev code (CURRENT branch of $SGLANG_SRC, default /Users/yushengsu/Downloads/tml/sglang)
 #    to every pod and install it.
-#    Input : model name (qwen|kimi); state from step 1. Optional SGLANG_SRC override.
+#    Input : model name (dir under dev/models/ or unique prefix); state from step 1.
+#            Optional SGLANG_SRC override.
 #    Output: every pod's /root/sglang checked out at the local HEAD commit, `pip install -e python`
 #            done, flashinfer re-pinned to the image-matching ${FLASHINFER_PIN}.
 #    Verify: in-pod HEAD == local HEAD on every pod + `import sglang` works.

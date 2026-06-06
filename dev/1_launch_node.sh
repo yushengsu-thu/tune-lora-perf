@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# 1. Launch the GB300 node/pod(s) for <qwen|kimi> and wait until fully set up.
-#    Input : model name (qwen|kimi). Optional env ID=<dns-safe id> (default: date +%Y%m%d-%H%M%S).
+# 1. Launch the GB300 node/pod(s) for <model> and wait until fully set up.
+#    Input : model name (a dir under dev/models/, or a unique prefix like qwen|kimi).
+#            Optional env ID=<dns-safe id> (default: date +%Y%m%d-%H%M%S).
 #    Output: Ready pod(s) with weights downloaded + sglang installed; pod identity saved to
 #            dev/.state/<model>.env (read by every later step).
 #    Verify: pod Ready + /root/.setup-done on every pod + 4 GPUs visible per pod.
@@ -40,8 +41,8 @@ for f in free[:6]: print("  " + f, file=sys.stderr)
 echo "   free nodes: ${FREE}"
 [ "${FREE:-0}" -ge "$NNODES" ] || { echo "ERROR: need ${NNODES} empty GB300 node(s), only ${FREE} free — try later or free one up"; exit 1; }
 
-# pod spec: reuse the validated regression pack yaml (single source of truth)
-sed "s/\${ID}/${ID}/g" "${PACK}/pod.yaml" | $KC apply -f -
+# pod spec: from the model pack (defaults to the validated regression pack yaml)
+sed "s/\${ID}/${ID}/g" "$POD_YAML" | $KC apply -f -
 
 echo "-- waiting for pod Ready (timeout ${POD_READY_TIMEOUT}; first-ever node pays the image pull)"
 for P in "${PODS[@]}"; do

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 5. Profile LoRA vs no-LoRA (torch profiler, CPU+GPU, cuda-graph ON = real timing).
-#    Input : model name (qwen|kimi); pods from step 1 running the code from step 2.
+#    Input : model name (dir under dev/models/ or unique prefix); pods from step 1
+#            running the code from step 2.
 #    Output: $RUN_DIR/  (= dev/results/<model>/<DATE>-<TIME>/, shared with step 3)
 #              ├── no-lora/  bs<bs>-TP-<r>.trace.json.gz  (+ bench.log of the profiled run)
 #              └── lora/     bs<bs>-TP-<r>.trace.json.gz

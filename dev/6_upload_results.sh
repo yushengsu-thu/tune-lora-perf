@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 6. Upload the run results to the GitHub repo `lora_perf_lora_profile`
 #    (created automatically, private, if it doesn't exist).
-#    Input : model name (qwen|kimi); $RUN_DIR from step 3/4 state.
+#    Input : model name (dir under dev/models/ or unique prefix); $RUN_DIR from step 3/4 state.
 #    Output: a commit at <repo>/runs/<model>/<DATE>-<TIME>/ with bench + profiles.
 #    Verify: the pushed path is visible via the GitHub API.
 . "$(dirname "$0")/common.sh" "${1:-}"

@@ -10,7 +10,8 @@
 #    (prefill-only, no sampling) for BOTH cells.
 #    NOTE: prefill-only — it CANNOT see decode garbage; the coherence gate (run per cell here
 #    too) is the decode check.
-#    Input : model name (qwen|kimi); pods from step 1 running the code from step 2.
+#    Input : model name (dir under dev/models/ or unique prefix); pods from step 1
+#            running the code from step 2.
 #            Optional: ACC_DATA=<in-pod .pt path> | ACC_HF_FILE=<file in ACC_HF_REPO
 #            (default yushengsu/datasets)> to use a reference .pt from HF.
 #    Output: $RUN_DIR/acc/{no-lora,lora}/logprobs.json + $RUN_DIR/acc/summary.md

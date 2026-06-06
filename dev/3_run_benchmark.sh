@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# 3. Benchmark LoRA vs no-LoRA (bench_one_batch_server, in=out=2048, bs 16/32/64).
-#    Input : model name (qwen|kimi); pods from step 1 running the code from step 2.
+# 3. Benchmark LoRA vs no-LoRA (bench_one_batch_server; bs/in/out from the model pack).
+#    Input : model name (dir under dev/models/ or unique prefix); pods from step 1 running
+#            the code from step 2.
 #    Output: $RUN_DIR/bench/{no-lora,lora}/bs<bs>.{jsonl,log,serverlog} +
 #            $RUN_DIR/bench/summary.md with input/extend tok/s, decode tok/s, ITL, e2e latency.
 #    Verify: every bs<bs>.jsonl parses for both cells + a post-load coherence check per cell

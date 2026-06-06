@@ -1,22 +1,27 @@
 # dev/ — GB300 dev loop (launch → upload code → bench → profile → publish)
 
 Minimal scripts to test **local sglang dev code** (LoRA vs no-LoRA) on the **GB300 cluster
-(`gcp-radixark-02`)** for **Qwen3.5-35B-A3B-FP8** and **Kimi-K2.5-NVFP4**.
+(`gcp-radixark-02`)**. The scripts are **model-general**: every model is a directory under
+[`models/`](models/) named `${MODEL_NAME}-${PRECISION}` (currently `Qwen3.5-35B-A3B-FP8` and
+`Kimi-K2.5-NVFP4`), and **all model-specific parameters live in that directory's `model.env`**.
 One script = one step; every step **verifies itself** and exits non-zero on failure, so the
-chain (`run_all.sh`) stops at the first problem. Pod specs and server flags are reused from the
-validated [`../regression/gb300`](../regression/gb300) packs — knowledge/caveats live in those
+chain (`run_all.sh`) stops at the first problem. Pod specs default to the validated
+[`../regression/gb300`](../regression/gb300) packs — knowledge/caveats live in those
 `MODEL.md` files.
 
 ```
 dev/
-├── common.sh            # shared config (qwen|kimi) + proven launch/wait/kill helpers
+├── common.sh            # model-agnostic config + proven launch/wait/kill helpers
+├── models/              # ★ one dir per model = ${MODEL_NAME}-${PRECISION}
+│   ├── Qwen3.5-35B-A3B-FP8/model.env    # ALL qwen params (tp/ep, paths, flags, envs, recipes)
+│   └── Kimi-K2.5-NVFP4/model.env        # ALL kimi params
 ├── 1_launch_node.sh     # launch pod(s), wait for weights+install, verify GPUs
 ├── 2_upload_code.sh     # push the CURRENT local sglang branch to the pods + pip install -e
 ├── 3_run_benchmark.sh   # LoRA vs no-LoRA bench → input/extend, decode, e2e table
 ├── 4_run_acc.sh         # LoRA vs no-LoRA accuracy → per-token logprob diff vs ACC_TOL
 ├── 5_run_profile.sh     # LoRA vs no-LoRA torch profiles → <DATE>-<TIME>/{lora,no-lora}/
 ├── 6_upload_results.sh  # push the run dir to github.com/<you>/lora_perf_lora_profile
-├── run_all.sh           # the whole chain: run_all.sh <qwen|kimi|all>
+├── run_all.sh           # the whole chain: run_all.sh <model|all>
 ├── .state/<model>.env   # pod ID + RUN_DIR handoff between steps (written by 1, read by 2-6)
 └── results/<model>/<DATE>-<TIME>/   # everything a run produces, locally
 ```
@@ -35,11 +40,31 @@ dev/
 ## Run everything
 
 ```bash
-bash dev/run_all.sh qwen     # or: kimi, or: all
-# `qwen`/`kimi` are CLI shorthands for Qwen3.5-35B-A3B-FP8 / Kimi-K2.5-NVFP4 (full names also
-# accepted); state files and results dirs are keyed by the FULL model name:
+bash dev/run_all.sh Qwen3.5-35B-A3B-FP8   # any dir name under dev/models/
+bash dev/run_all.sh qwen                  # …or any unique case-insensitive prefix of one
+bash dev/run_all.sh all                   # every model under dev/models/, in turn
+# State files and results dirs are keyed by the FULL model dir name (after prefix resolution):
 #   dev/.state/Qwen3.5-35B-A3B-FP8.env , dev/results/Kimi-K2.5-NVFP4/<DATE>-<TIME>/ , …
 ```
+
+## Add a new model
+
+Create `dev/models/${MODEL_NAME}-${PRECISION}/model.env` (copy an existing one) and set every
+variable in it — that file is the **single place** for model parameters:
+
+| group | variables |
+|---|---|
+| topology | `NNODES`, `TP`, `EP`, `GPUS_PER_NODE`, `DIST_PORT` (required if `NNODES>1`) |
+| pods | `POD_PREFIX`; optional `PACK`/`POD_YAML` (default: `../regression/gb300/models/<model>/pod.yaml`) |
+| paths | `MODEL_PATH`, `LORA_PATH` (in-pod) |
+| server | `SERVER_COMMON` (flags both cells share), `ENV_COMMON`, `LORA_EXTRA` (lora-cell flags), `LORA_ENVS` (lora-cell `SGLANG_*` envs) |
+| recipes | `BENCH_BS`/`BENCH_IN`/`BENCH_OUT`, `ACC_TOL`, `PROF_RECIPE` (`bs start steps outlen`), `TRACE_RANKS` |
+| timeouts | `READY_TIMEOUT_MIN` (server JIT/autotune), `POD_READY_TIMEOUT` (k8s) |
+
+`common.sh` sources the file and fails fast if any required variable is missing. The dir name is
+the model name everywhere (CLI arg, state file, results dir, published runs); a unique prefix of
+it works as a CLI shorthand automatically. A multi-node model also needs a pod yaml whose pods
+follow `${POD_PREFIX}-${ID}-<n>` + a `-head` service (see the kimi regression pack).
 
 Total ≈ 2–5 h per model (first-ever run on a node also pays the weight download and the cold
 sm_103 JIT/autotune — Qwen ~40GB+45min JIT once per node; Kimi ~600GB to ephemeral disk and
@@ -48,16 +73,16 @@ each = 6 launches total) — that's the price of standalone, individually-rerunn
 
 ## The steps (inputs / outputs)
 
-### 1. `1_launch_node.sh <qwen|kimi>` — launch the node
+### 1. `1_launch_node.sh <model>` — launch the node
 
 | | |
 |---|---|
 | input | model name; optional `ID=<dns-safe-id>` (default `date +%Y%m%d-%H%M%S`) |
-| does | **free-node pre-check** (the pod requests a full node's 4 GPUs, so the K8s scheduler auto-places it on an empty GB300 node; the pre-check fails fast instead of hanging Pending when none is free) → `kubectl apply` the regression pod yaml (qwen: 1 pod `sglang-gb300-qwen3vl-yushengsu-<ID>`; kimi: 2 pods + ComputeDomain/MNNVL, anti-affinity forces two different nodes), wait Ready, wait `/root/.setup-done` (weights + base install) |
+| does | **free-node pre-check** (the pod requests a full node's 4 GPUs, so the K8s scheduler auto-places it on an empty GB300 node; the pre-check fails fast instead of hanging Pending when none is free) → `kubectl apply` the pack's `POD_YAML` (e.g. qwen: 1 pod `sglang-gb300-qwen3vl-yushengsu-<ID>`; kimi: 2 pods + ComputeDomain/MNNVL, anti-affinity forces two different nodes), wait Ready, wait `/root/.setup-done` (weights + base install) |
 | output | running pod(s); `dev/.state/<model>.env` with the pod `ID` |
 | verify | pod Ready + setup-done on every pod + ≥4 GPUs visible per pod |
 
-### 2. `2_upload_code.sh <qwen|kimi>` — upload the dev code
+### 2. `2_upload_code.sh <model>` — upload the dev code
 
 | | |
 |---|---|
@@ -66,16 +91,16 @@ each = 6 launches total) — that's the price of standalone, individually-rerunn
 | output | every pod's `/root/sglang` at your local HEAD |
 | verify | in-pod `git rev-parse HEAD` == local HEAD + `import sglang` succeeds, per pod |
 
-### 3. `3_run_benchmark.sh <qwen|kimi>` — LoRA vs no-LoRA benchmark
+### 3. `3_run_benchmark.sh <model>` — LoRA vs no-LoRA benchmark
 
 | | |
 |---|---|
 | input | state; server cells: **no-lora** (stock backend) vs **lora** (`experimental_sgl_trtllm` + the model's required `SGLANG_*` env set, requests routed to the `alpha` adapter) |
-| does | per cell: launch graph-ON server (1 retry; patient cold-JIT wait) → `bench_one_batch_server` bs 16/32/64, in=out=2048 → server-log slice → coherence probe → kill |
+| does | per cell: launch graph-ON server (1 retry; patient cold-JIT wait) → `bench_one_batch_server` with the pack's `BENCH_BS`/`BENCH_IN`/`BENCH_OUT` (currently bs 16/32/64, in=out=2048) → server-log slice → coherence probe → kill |
 | output | `results/<model>/<DATE>-<TIME>/bench/{no-lora,lora}/bs<bs>.{jsonl,log,serverlog}` + `bench/summary.md` — table of **input/extend tok/s, decode tok/s, ITL ms, e2e s** + lora/no-lora decode ratio |
 | verify | every `bs<bs>.jsonl` parses for both cells + per-cell post-load coherence (no `!!!!` decode collapse) |
 
-### 4. `4_run_acc.sh <qwen|kimi>` — LoRA vs no-LoRA accuracy
+### 4. `4_run_acc.sh <model>` — LoRA vs no-LoRA accuracy
 
 | | |
 |---|---|
@@ -87,16 +112,16 @@ each = 6 launches total) — that's the price of standalone, individually-rerunn
 > acc is prefill-only — it **cannot** see decode-accumulating garbage (proven: a corrupted-decode
 > server scored clean acc while generating `!!!!`). The per-cell coherence probe is the decode gate.
 
-### 5. `5_run_profile.sh <qwen|kimi>` — LoRA vs no-LoRA profile
+### 5. `5_run_profile.sh <model>` — LoRA vs no-LoRA profile
 
 | | |
 |---|---|
-| input | state; profile recipe per model (qwen `bs64 start8 steps24`, kimi `bs16 start4 steps12` — clean-decode windows) |
-| does | per cell: launch graph-ON server → `bench_one_batch_server --profile` (CPU+GPU) → pull every per-rank trace (gzip-verified, kimi ranks 4-7 pulled from the worker pod) |
+| input | state; the pack's `PROF_RECIPE` (qwen `bs64 start8 steps24`, kimi `bs16 start4 steps12` — clean-decode windows) |
+| does | per cell: launch graph-ON server → `bench_one_batch_server --profile` (CPU+GPU) → pull every `TRACE_RANKS` trace (gzip-verified; multi-node ranks map to pods via `GPUS_PER_NODE`, e.g. kimi ranks 4-7 from the worker pod) |
 | output | `results/<model>/<DATE>-<TIME>/{no-lora,lora}/bs<bs>-TP-<r>.trace.json.gz` (+ `bench.log`) — the `<DATE>-<TIME>` dir holds both cells' profiles, shared with steps 3/4 |
 | verify | every expected trace exists locally and passes `gzip -t` |
 
-### 6. `6_upload_results.sh <qwen|kimi>` — publish
+### 6. `6_upload_results.sh <model>` — publish
 
 | | |
 |---|---|
@@ -105,7 +130,7 @@ each = 6 launches total) — that's the price of standalone, individually-rerunn
 | output | `https://github.com/<you>/lora_perf_lora_profile/tree/main/runs/<model>/<DATE>-<TIME>` |
 | verify | pushed path readable via the GitHub API |
 
-### `run_all.sh <qwen|kimi|all>` — everything
+### `run_all.sh <model|all>` — everything
 
 Runs 1→2→3→4→5→6; each step's own verification gates the next; first failure aborts.
 
@@ -114,8 +139,9 @@ Runs 1→2→3→4→5→6; each step's own verification gates the next; first f
 - **Steps are resumable**: each reads `dev/.state/<model>.env`, so you can rerun any single step
   (e.g. iterate `2 → 3` on the same pods after a code change). Step 1 resets the state.
 - **Cleanup** when done:
-  `ID=<id> sh -c 'sed "s/\${ID}/$ID/g" ../regression/gb300/models/<pack>/pod.yaml | kubectl --context gcp-radixark-02 delete -f - --ignore-not-found'`
-  (pack = `Qwen3.5-35B-A3B-FP8` | `Kimi-K2.5-NVFP4`; `<id>` is in `dev/.state/<model>.env`).
+  `ID=<id> sh -c 'sed "s/\${ID}/$ID/g" ../regression/gb300/models/<model>/pod.yaml | kubectl --context gcp-radixark-02 delete -f - --ignore-not-found'`
+  (`<model>` = the dev/models dir name; if the pack overrides `POD_YAML`, delete that yaml
+  instead; `<id>` is in `dev/.state/<model>.env`).
 - Decode throughput is the headline number; `bs<bs>.serverlog` keeps the scheduler's own
   `gen throughput` lines as ground truth if a bench number looks suspicious (>5% mismatch ⇒
   rerun — see `../regression/SKILL.md` item 4).

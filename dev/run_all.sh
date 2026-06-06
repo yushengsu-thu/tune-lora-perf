@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Full e2e: launch node -> upload dev code -> benchmark -> accuracy -> profile -> upload results.
-#    Usage:  bash run_all.sh qwen        # or: kimi, or: all (qwen then kimi)
+#    Usage:  bash run_all.sh <model|all>
+#      <model> = a dir under dev/models/ (e.g. Qwen3.5-35B-A3B-FP8, Kimi-K2.5-NVFP4) or any
+#      unique prefix ('qwen', 'kimi'); 'all' runs every model under dev/models/ in turn.
 #    Each step verifies itself and the chain STOPS at the first failure.
 set -uo pipefail
 DEV_DIR="$(cd "$(dirname "$0")" && pwd)"
-M="${1:?usage: run_all.sh <qwen|kimi|all>}"
+M="${1:?usage: run_all.sh <model|all>  (models: $(ls "${DEV_DIR}/models" 2>/dev/null | tr '\n' ' '))}"
 
 run_one(){
   local m=$1 step
@@ -16,8 +18,8 @@ run_one(){
   echo "######## $m: ALL STEPS PASS ########"
 }
 
-case "$M" in
-  qwen|kimi|Qwen3.5-35B-A3B-FP8|Kimi-K2.5-NVFP4) run_one "$M" ;;
-  all)       run_one qwen && run_one kimi ;;
-  *) echo "usage: run_all.sh <qwen|kimi|all>"; exit 1 ;;
-esac
+if [ "$M" = all ]; then
+  for d in "${DEV_DIR}/models"/*/; do run_one "$(basename "$d")" || exit 1; done
+else
+  run_one "$M"   # name validation (incl. prefix resolution) happens in common.sh
+fi

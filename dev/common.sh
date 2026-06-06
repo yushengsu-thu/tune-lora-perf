@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
 # dev/common.sh — shared config + helpers for the GB300 dev loop (sourced by every step script).
-# Usage in each script:  . "$(dirname "$0")/common.sh" <qwen|kimi>
+# Usage in each script:  . "$(dirname "$0")/common.sh" <model>
+#   <model> = a dir under dev/models/ (${MODEL_NAME}-${PRECISION}, e.g. Qwen3.5-35B-A3B-FP8),
+#   or any unique case-insensitive prefix of one ('qwen', 'kimi', ...). ALL model-specific
+#   parameters live in dev/models/<model>/model.env — add a dir+model.env to add a model.
 # Cluster: gcp-radixark-02 ONLY (never leira — that cluster is gone).
 # Proven mechanics copied from ../regression/scripts/run_regression.sh (kill_all / wait_ready /
-# foreground-exec launch / '>>' server log / worker-first kimi start) — do not "simplify" them.
+# foreground-exec launch / '>>' server log / worker-first multi-node start) — do not "simplify" them.
 
 set -uo pipefail
 
-MODEL="${1:?usage: $(basename "${BASH_SOURCE[1]:-script}") <qwen|kimi>  (or the full names Qwen3.5-35B-A3B-FP8 | Kimi-K2.5-NVFP4)}"
 DEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$DEV_DIR")"
+MODELS_DIR="${DEV_DIR}/models"
 STATE_DIR="${DEV_DIR}/.state"; mkdir -p "$STATE_DIR"
+
+list_models(){ ls "$MODELS_DIR" 2>/dev/null | tr '\n' ' '; }
+MODEL="${1:?usage: $(basename "${BASH_SOURCE[1]:-script}") <model>  (a dir under dev/models/ or a unique prefix: $(list_models))}"
 
 KC="kubectl --context gcp-radixark-02"   # pin the context per-command; never mutate the user's
 
@@ -19,65 +25,35 @@ PORT=30000
 LORA_NAME=alpha
 FLASHINFER_PIN="${FLASHINFER_PIN:-0.6.11.post1}"  # must match the pinned image jit-cache
 
-# ---------- per-model config (values from the validated regression packs) ----------
-case "$MODEL" in
-  qwen|Qwen3.5-35B-A3B-FP8)
-    MODEL="Qwen3.5-35B-A3B-FP8"          # 'qwen' is the CLI shorthand; paths use the full name
-    PACK="${ROOT_DIR}/regression/gb300/models/Qwen3.5-35B-A3B-FP8"
-    NNODES=1; TP=4; EP=4; GPUS_PER_NODE=4
-    POD_PREFIX="sglang-gb300-qwen3vl-yushengsu"
-    MODEL_PATH=/data/Qwen3.5-35B-A3B-FP8
-    LORA_PATH=/data/qwen35_35b_lora_alpha
-    SERVER_COMMON="--model-path ${MODEL_PATH} --tp ${TP} --ep ${EP} --host 0.0.0.0 --port ${PORT} \
---mem-fraction-static 0.8 --trust-remote-code --cuda-graph-max-bs 128 --max-prefill-tokens 65536 \
---chunked-prefill-size 4096 --mamba-scheduler-strategy extra_buffer \
---enable-flashinfer-allreduce-fusion --attention-backend trtllm_mha"
-    ENV_COMMON="PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
-    LORA_EXTRA="--moe-runner-backend experimental_sgl_trtllm --lora-use-virtual-experts \
---enable-lora --max-loras-per-batch 1 --max-lora-rank 16 --lora-backend triton \
---lora-paths ${LORA_NAME}=${LORA_PATH}"
-    # MAIN_ALLOC=1 REQUIRED (without it decode = garbage); never DOWN_FINALIZE_OVERLAP / ENABLE_PDL.
-    LORA_ENVS="SGLANG_EXPERIMENTAL_LORA_OPTI=1 SGLANG_OPT_LORA_OVERLAP_MAIN_ALLOC=1 \
-SGLANG_OPT_LORA_SHARED_ADD_OVERLAP=1 SGLANG_OPT_LORA_CUBLAS=1"
-    BENCH_BS="16 32 64"; BENCH_IN=2048; BENCH_OUT=2048
-    ACC_TOL=0.05                         # UNMEASURED placeholder (regression model.env) — alpha is near-identity
-    PROF_RECIPE="64 8 24 48"             # bs start-step steps output-len (forwards 8-31 all decode)
-    TRACE_RANKS="0 1 2 3"
-    READY_TIMEOUT_MIN=45                 # first sm_103 cold JIT can exceed 30 min
-    POD_READY_TIMEOUT=20m
-    ;;
-  kimi|Kimi-K2.5-NVFP4)
-    MODEL="Kimi-K2.5-NVFP4"              # 'kimi' is the CLI shorthand; paths use the full name
-    PACK="${ROOT_DIR}/regression/gb300/models/Kimi-K2.5-NVFP4"
-    NNODES=2; TP=8; EP=8; GPUS_PER_NODE=4
-    POD_PREFIX="sglang-gb300-kimi-yushengsu"
-    MODEL_PATH=/root/Kimi-K2.5-NVFP4
-    LORA_PATH=/root/kimi_k25_lora_alpha
-    DIST_PORT=20000
-    SERVER_COMMON="--model-path ${MODEL_PATH} --tp ${TP} --ep ${EP} --host 0.0.0.0 --port ${PORT} \
---quantization modelopt_fp4 --mem-fraction-static 0.83 --trust-remote-code --cuda-graph-max-bs 128 \
---max-prefill-tokens 40960 --chunked-prefill-size 40960 --dist-timeout 1800"
-    ENV_COMMON="NCCL_MNNVL_ENABLE=1 NCCL_NVLS_ENABLE=1 NCCL_CUMEM_ENABLE=1 \
-SGLANG_ENABLE_TP_MEMORY_INBALANCE_CHECK=false PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
-    LORA_EXTRA="--moe-runner-backend experimental_sgl_trtllm --lora-use-virtual-experts \
---enable-lora --max-loras-per-batch 1 --max-lora-rank 16 --lora-backend triton \
---lora-paths ${LORA_NAME}=${LORA_PATH}"
-    # PER_TOKEN_ACTIVATION=1 REQUIRED (else lora garbage); SWIGLU_FUSION=0 REQUIRED (fusion
-    # bypasses the LoRA delta under --enable-lora). See regression/gb300/models/Kimi-K2.5-NVFP4/MODEL.md.
-    LORA_ENVS="SGLANG_EXPERIMENTAL_LORA_OPTI=1 SGLANG_FLASHINFER_NVFP4_PER_TOKEN_ACTIVATION=1 \
-SGLANG_ENABLE_NVFP4_GEMM_SWIGLU_FUSION=0 SGLANG_OPT_USE_JIT_KERNEL_KIMI_GATE=1 \
-SGLANG_OPT_USE_JIT_KERNEL_MOE_ALIGN=1 SGLANG_OPT_FUSED_PERMUTE_QUANT=1 \
-SGLANG_OPT_FUSED_MOE_ACTIVATION_QUANT_FUSE=1"
-    BENCH_BS="16 32 64"; BENCH_IN=2048; BENCH_OUT=2048
-    ACC_TOL=0.30                         # MEASURED atomic-add noise floor (regression kimi MODEL.md)
-    PROF_RECIPE="16 4 12 64"
-    TRACE_RANKS="0 1 2 3 4 5 6 7"        # 8 ranks across BOTH pods (rank/4 -> pod index)
-    READY_TIMEOUT_MIN=50                 # cold fp4 autotune is process-local (re-tunes every launch)
-    POD_READY_TIMEOUT=25m
-    ;;
-  *) echo "ERROR: unknown model '$MODEL' (qwen|kimi or Qwen3.5-35B-A3B-FP8|Kimi-K2.5-NVFP4)" >&2; exit 1 ;;
-esac
-STATE="${STATE_DIR}/${MODEL}.env"        # keyed by the FULL model name (after shorthand normalization)
+# ---------- model resolution: exact dev/models/<arg> dir, else unique case-insensitive prefix
+# ('qwen' -> Qwen3.5-35B-A3B-FP8, 'kimi' -> Kimi-K2.5-NVFP4); paths/state use the FULL dir name.
+if [ ! -d "${MODELS_DIR}/${MODEL}" ]; then
+  _lower=$(printf %s "$MODEL" | tr '[:upper:]' '[:lower:]'); _match=""; _n=0
+  for _d in "${MODELS_DIR}"/*/; do
+    _b=$(basename "$_d")
+    case "$(printf %s "$_b" | tr '[:upper:]' '[:lower:]')" in "$_lower"*) _match="$_b"; _n=$((_n+1));; esac
+  done
+  [ "$_n" = 1 ] || { echo "ERROR: unknown or ambiguous model '$MODEL' — available: $(list_models)" >&2; exit 1; }
+  MODEL="$_match"
+fi
+MODEL_DIR="${MODELS_DIR}/${MODEL}"
+
+# ---------- per-model config (ALL model parameters come from the model pack) ----------
+# shellcheck disable=SC1091
+. "${MODEL_DIR}/model.env"
+for _v in NNODES TP EP GPUS_PER_NODE POD_PREFIX MODEL_PATH LORA_PATH SERVER_COMMON \
+          LORA_EXTRA LORA_ENVS BENCH_BS BENCH_IN BENCH_OUT ACC_TOL PROF_RECIPE \
+          TRACE_RANKS READY_TIMEOUT_MIN POD_READY_TIMEOUT; do
+  eval "[ -n \"\${$_v:-}\" ]" || { echo "ERROR: ${MODEL_DIR}/model.env must set $_v" >&2; exit 1; }
+done
+[ "$NNODES" -le 1 ] || [ -n "${DIST_PORT:-}" ] || { echo "ERROR: NNODES>1 requires DIST_PORT in ${MODEL_DIR}/model.env" >&2; exit 1; }
+ENV_COMMON="${ENV_COMMON:-}"
+# pod spec defaults to the validated regression pack's yaml; override PACK/POD_YAML in model.env
+PACK="${PACK:-${ROOT_DIR}/regression/gb300/models/${MODEL}}"
+POD_YAML="${POD_YAML:-${PACK}/pod.yaml}"
+[ -f "$POD_YAML" ] || { echo "ERROR: pod yaml not found: $POD_YAML (set PACK or POD_YAML in ${MODEL_DIR}/model.env)" >&2; exit 1; }
+
+STATE="${STATE_DIR}/${MODEL}.env"        # keyed by the FULL model name (after prefix resolution)
 
 # ---------- state (written by 1_launch_node.sh; read by everything after) ----------
 load_state(){ [ -f "$STATE" ] || { echo "ERROR: no state for '$MODEL' — run 1_launch_node.sh $MODEL first" >&2; exit 1; }
