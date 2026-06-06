@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# 6. Full e2e: launch node -> upload dev code -> benchmark -> profile -> upload results.
+#    Usage:  bash run_all.sh qwen        # or: kimi, or: all (qwen then kimi)
+#    Each step verifies itself and the chain STOPS at the first failure.
+set -uo pipefail
+DEV_DIR="$(cd "$(dirname "$0")" && pwd)"
+M="${1:?usage: run_all.sh <qwen|kimi|all>}"
+
+run_one(){
+  local m=$1 step
+  echo "######## run_all: $m ########"
+  for step in 1_launch_node 2_upload_code 3_run_benchmark 4_run_profile 5_upload_results; do
+    echo; echo "######## $m :: $step ########"
+    bash "${DEV_DIR}/${step}.sh" "$m" || { echo "######## $m FAILED at ${step} — aborting ########"; return 1; }
+  done
+  echo "######## $m: ALL STEPS PASS ########"
+}
+
+case "$M" in
+  qwen|kimi) run_one "$M" ;;
+  all)       run_one qwen && run_one kimi ;;
+  *) echo "usage: run_all.sh <qwen|kimi|all>"; exit 1 ;;
+esac
