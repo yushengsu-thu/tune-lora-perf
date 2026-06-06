@@ -4,10 +4,12 @@
 #
 #    The cache already persists PER NODE without this step: the pod mounts /root/.cache on
 #    the node's /mnt/stateful_partition/sglang-dot-cache (hostPath), so a relaunch on the
-#    SAME node is warm. This step copies that dir to the OTHER nodes (chunked, verified —
-#    see ../regression/gb300/models/Qwen3.5-35B-A3B-FP8/broadcast_jit_cache.sh for the
-#    mechanics; the cache dir is node-level and model-agnostic, so one broadcast covers
-#    every model that compiled on the source node).
+#    SAME node is warm. This step copies that dir to the OTHER nodes IN-CLUSTER (the source
+#    sync pod serves the tarball over the pod network; targets pull in parallel, size+gzip
+#    verified — minutes for ~1.3GB x 16 nodes; mechanics in
+#    ../regression/gb300/models/Qwen3.5-35B-A3B-FP8/broadcast_jit_cache.sh; the cache dir is
+#    node-level and model-agnostic, so one broadcast covers every model that compiled on the
+#    source node).
 #
 #    NOTE: kimi's fp4 autotune is process-local (re-tunes every launch) — broadcasting
 #    helps its JIT kernels, not the autotune.

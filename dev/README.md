@@ -146,7 +146,9 @@ The JIT/compile cache (deep_gemm, flashinfer, triton, trtllm_lora_temp) already 
 per node**: the pod mounts `/root/.cache` on the node's
 `/mnt/stateful_partition/sglang-dot-cache` (hostPath), so a relaunch on the *same* node skips
 the >30-min cold sm_103 JIT. This step copies that dir from the current run's node to **every
-other GB300 GPU node** (size-verified chunks via temporary non-GPU sync pods — mechanics in
+other GB300 GPU node** — **in-cluster direct transfer**: temporary non-GPU sync pods, the
+source serves the tarball over the pod network and all targets pull **in parallel** with
+size+gzip verification (~1.3GB → 16 nodes in minutes; mechanics in
 [`../regression/gb300/models/Qwen3.5-35B-A3B-FP8/broadcast_jit_cache.sh`](../regression/gb300/models/Qwen3.5-35B-A3B-FP8/broadcast_jit_cache.sh)),
 so **any future pod lands warm no matter which node it gets**. The cache dir is node-level and
 model-agnostic — one broadcast covers everything compiled on the source node. Run it after a
