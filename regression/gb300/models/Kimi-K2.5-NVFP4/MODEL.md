@@ -1,11 +1,11 @@
 # Kimi-K2.5-NVFP4 on GB300 — model knowledge
 
-**GB300 (sm_103) 2-node MNNVL port of the [`gb200/models/kimi`](../../../gb200/models/kimi/MODEL.md)
+**GB300 (sm_103) 2-node MNNVL port of the [`gb200/models/Kimi-K2.5-NVFP4`](../../../gb200/models/Kimi-K2.5-NVFP4/MODEL.md)
 pack** — read that file for the env matrix, robustness items, and adapter caveats. This file only
 records the GB300 deltas. Cluster basics (context, taints, stateful partition, broadcast):
 [`../Qwen3.5-35B-A3B-FP8/MODEL.md`](../Qwen3.5-35B-A3B-FP8/MODEL.md).
 
-## Deltas vs gb200/models/kimi
+## Deltas vs gb200/models/Kimi-K2.5-NVFP4
 
 | | gb200 (leira) | gb300 (gcp-radixark-02) |
 |---|---|---|

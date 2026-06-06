@@ -1,10 +1,10 @@
 ---
-# GB300 port of ../kimi-rf.yaml — Kimi 2-node MNNVL TP8/EP8 on gcp-radixark-02 (GKE).
+# GB300 port of ../Kimi-K2.5-NVFP4-rf.yaml — Kimi 2-node MNNVL TP8/EP8 on gcp-radixark-02 (GKE).
 # Verified against the cluster (2026-06-06):
 #   * computedomains.resource.nvidia.com CRD + compute-domain-* deviceclasses EXIST (DRA IMEX OK)
 #   * ComputeDomain shape copied from a WORKING 2-node deployment on this cluster
 #     (inference-deepseek-v4-pro/deepseek-v4-pro-2node): numNodes: 2, allocationMode: Single
-#     (kimi-rf.yaml's claim-driven numNodes: 0 NOT used here — match what's proven on this driver)
+#     (Kimi-K2.5-NVFP4-rf.yaml's claim-driven numNodes: 0 NOT used here — match what's proven on this driver)
 #   * all 18 gb300 nodes share ONE gce-topology-subblock (one NVL72 fabric) -> no placement
 #     affinity needed beyond anti-affinity (2 distinct nodes)
 #   * NO runtimeClassName (GKE has no `nvidia` class); cohort toleration required

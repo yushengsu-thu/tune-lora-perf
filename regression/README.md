@@ -45,17 +45,17 @@ regression/
 │   └── publish.sh                     # GitHub publish (small files → commit, traces → Release)
 │
 ├── gb200/                             # ── GB200 platform (leira cluster) ──
-│   ├── run_kimi.sh                    # entry point: Kimi regression (2-node MNNVL)
+│   ├── run_Kimi-K2.5-NVFP4.sh                    # entry point: Kimi regression (2-node MNNVL)
 │   ├── run_Qwen3.5-35B-A3B-FP8.sh                  # entry point: Qwen3.5 regression (1 node)
 │   └── models/
-│       ├── kimi/                      # model.env + pod.yaml + hooks.sh + MODEL.md
+│       ├── Kimi-K2.5-NVFP4/                      # model.env + pod.yaml + hooks.sh + MODEL.md
 │       └── Qwen3.5-35B-A3B-FP8/                    # (single pod + /mnt/nvme-b hostPath)
 │
 └── gb300/                             # ── GB300 platform (gcp-radixark-02 cluster, sm_103) ──
-    ├── run_kimi.sh                    # entry point: Kimi regression (2-node MNNVL via DRA)
+    ├── run_Kimi-K2.5-NVFP4.sh                    # entry point: Kimi regression (2-node MNNVL via DRA)
     ├── run_Qwen3.5-35B-A3B-FP8.sh                  # entry point: Qwen3.5 regression (1 node)
     └── models/
-        ├── kimi/                      # 2-node GKE pods (ComputeDomain; weights on 2.9T eph SSD)
+        ├── Kimi-K2.5-NVFP4/                      # 2-node GKE pods (ComputeDomain; weights on 2.9T eph SSD)
         └── Qwen3.5-35B-A3B-FP8/                    # GKE-adapted pod (stateful-partition mounts, cohort
             │                          #   toleration, 45-min cold-JIT timeout)
             └── broadcast_jit_cache.sh # fan a built JIT cache out to all GB300 nodes
@@ -275,5 +275,5 @@ kubectl exec <pod> -- python3 /tmp/prompts_check.py --lora alpha --model <model-
   "simplify" them away), and current validation status per platform.
 - `gb300/models/Qwen3.5-35B-A3B-FP8/MODEL.md` — GB300 deltas, env-var matrix, expected numbers, cold-JIT
   timing. (`gb200/models/Qwen3.5-35B-A3B-FP8/MODEL.md` holds the full base matrix it references.)
-- `gb300/models/kimi/MODEL.md` — the staged 2-node GB300 run (ComputeDomain/DRA; the 2-node
+- `gb300/models/Kimi-K2.5-NVFP4/MODEL.md` — the staged 2-node GB300 run (ComputeDomain/DRA; the 2-node
   code paths are ported from the proven GB200 kimi runner but not yet exercised live on GB300).

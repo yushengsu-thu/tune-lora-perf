@@ -2,7 +2,7 @@
 # Generic base-vs-variant regression driver — acc + bench + prompt-check + profile. HARDENED.
 #
 # Usage:  run_regression.sh <model>        (<model> = a dir under ../models/ with model.env)
-#         or via the thin wrappers: ../run_kimi.sh / ../run_Qwen3.5-35B-A3B-FP8.sh
+#         or via the thin wrappers: ../run_Kimi-K2.5-NVFP4.sh / ../run_Qwen3.5-35B-A3B-FP8.sh
 #         DRY_RUN=1 run_regression.sh <model>   -> print the assembled launch commands and exit
 #
 # ALL model-specific VALUES live in models/<model>/model.env (paths, topology, flags, profile
@@ -34,7 +34,7 @@ SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL_SCRIPTS="${SKILL_SCRIPTS:-${SKILL_DIR}/scripts}"
 # Model packs live under per-platform dirs (gb200/models/, gb300/models/, ...). The SAME pack
 # name exists on multiple platforms (e.g. kimi, qwen35) — wrappers pass the platform-scoped
-# path ("gb300/models/kimi"); a bare name is resolved by search and ERRORS if ambiguous.
+# path ("gb300/models/Kimi-K2.5-NVFP4"); a bare name is resolved by search and ERRORS if ambiguous.
 MODEL_DIR=""
 if [[ "$MODEL_REF" == */* ]]; then
   [ -d "${SKILL_DIR}/${MODEL_REF}" ] && MODEL_DIR="${SKILL_DIR}/${MODEL_REF}"

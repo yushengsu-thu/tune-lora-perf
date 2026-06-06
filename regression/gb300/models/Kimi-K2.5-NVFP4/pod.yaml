@@ -1,6 +1,6 @@
 ---
 # Kimi-K2.5-NVFP4 regression — GB300 (sm_103) 2-node MNNVL on gcp-radixark-02 (GKE).
-# Port of gb200/models/kimi/pod.yaml with the GB300/GKE deltas:
+# Port of gb200/models/Kimi-K2.5-NVFP4/pod.yaml with the GB300/GKE deltas:
 #   * NO runtimeClassName / privileged (cluster conventions)
 #   * cohort toleration (the FREE gb300 nodes carry radixark.io/cohort=true:NoSchedule)
 #   * small scheduling requests (busy cluster) + big ephemeral limits (weights ~600G go to the

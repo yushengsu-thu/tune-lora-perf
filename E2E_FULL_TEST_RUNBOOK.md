@@ -45,7 +45,7 @@ total via the MNNVL `imex-channel` resourceClaim + the `*-head` subdomain for
 ### 1.2 Pod YAML (key fields)
 
 Local copies: `~/Desktop/lora_bench_run/kimi-2node.yaml`, `~/Desktop/lora_bench_run/qwen35-pod.yaml`,
-`/tmp/rf_regression/kimi-rf.yaml`, `/tmp/rf_regression/flo-Qwen3.5-35B-A3B-FP8-tp1-pods.yaml`.
+`/tmp/rf_regression/Kimi-K2.5-NVFP4-rf.yaml`, `/tmp/rf_regression/flo-Qwen3.5-35B-A3B-FP8-tp1-pods.yaml`.
 
 ```yaml
 apiVersion: v1
@@ -205,7 +205,7 @@ PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python3 -m sglang.launch_server
 # (origin/main checkout; no SGLANG_EXPERIMENTAL_* envs)
 ```
 
-### 2.3 Kimi-K2.5-NVFP4 — TP8 / EP8, **2-node MNNVL** (`kimi_run.sh`)
+### 2.3 Kimi-K2.5-NVFP4 — TP8 / EP8, **2-node MNNVL** (`Kimi-K2.5-NVFP4_run.sh`)
 
 WORKER node FIRST, then HEAD (the head runs the test matrix). `DISTADDR` is the head's
 MNNVL DNS (`mnnvl-kimi-<lane>-0.mnnvl-kimi-<lane>-head:20000`).
@@ -233,9 +233,9 @@ Invocation (run on each pod; worker first):
 
 ```bash
 # worker pod:
-bash kimi_run.sh worker full-lora-opti 1 sgl_flashinfer_trtllm <DISTADDR> KIMI-PR full
+bash Kimi-K2.5-NVFP4_run.sh worker full-lora-opti 1 sgl_flashinfer_trtllm <DISTADDR> KIMI-PR full
 # head pod (then runs coherence+bench+gsm8k):
-bash kimi_run.sh head   full-lora-opti 1 sgl_flashinfer_trtllm <DISTADDR> KIMI-PR full
+bash Kimi-K2.5-NVFP4_run.sh head   full-lora-opti 1 sgl_flashinfer_trtllm <DISTADDR> KIMI-PR full
 ```
 
 ### 2.4 Qwen tp=ep=1 (single GPU) — `Qwen3.5-35B-A3B-FP8_tp1_v2.sh`
@@ -376,4 +376,4 @@ behavior**. Garbage/empty decode = a real bug (kernel/quant), not the adapter.
 - **`prompts_check.py`** — coherence prompts + per-endpoint adapter-behavior check.
 
 Run-orchestration scripts live in `/tmp/rf_regression/`: `Qwen3.5-35B-A3B-FP8_run.sh`, `Qwen3.5-35B-A3B-FP8_base.sh`,
-`Qwen3.5-35B-A3B-FP8_tp1_v2.sh`, `kimi_run.sh`, plus `reformat_sanity.sh` (import + gating sanity).
+`Qwen3.5-35B-A3B-FP8_tp1_v2.sh`, `Kimi-K2.5-NVFP4_run.sh`, plus `reformat_sanity.sh` (import + gating sanity).

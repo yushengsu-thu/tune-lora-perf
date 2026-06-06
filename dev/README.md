@@ -36,6 +36,9 @@ dev/
 
 ```bash
 bash dev/run_all.sh qwen     # or: kimi, or: all
+# `qwen`/`kimi` are CLI shorthands for Qwen3.5-35B-A3B-FP8 / Kimi-K2.5-NVFP4 (full names also
+# accepted); state files and results dirs are keyed by the FULL model name:
+#   dev/.state/Qwen3.5-35B-A3B-FP8.env , dev/results/Kimi-K2.5-NVFP4/<DATE>-<TIME>/ , …
 ```
 
 Total ≈ 2–5 h per model (first-ever run on a node also pays the weight download and the cold
@@ -112,7 +115,7 @@ Runs 1→2→3→4→5→6; each step's own verification gates the next; first f
   (e.g. iterate `2 → 3` on the same pods after a code change). Step 1 resets the state.
 - **Cleanup** when done:
   `ID=<id> sh -c 'sed "s/\${ID}/$ID/g" ../regression/gb300/models/<pack>/pod.yaml | kubectl --context gcp-radixark-02 delete -f - --ignore-not-found'`
-  (pack = `Qwen3.5-35B-A3B-FP8` | `kimi`; `<id>` is in `dev/.state/<model>.env`).
+  (pack = `Qwen3.5-35B-A3B-FP8` | `Kimi-K2.5-NVFP4`; `<id>` is in `dev/.state/<model>.env`).
 - Decode throughput is the headline number; `bs<bs>.serverlog` keeps the scheduler's own
   `gen throughput` lines as ground truth if a bench number looks suspicious (>5% mismatch ⇒
   rerun — see `../regression/SKILL.md` item 4).

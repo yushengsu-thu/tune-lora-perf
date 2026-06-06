@@ -17,7 +17,7 @@ run_one(){
 }
 
 case "$M" in
-  qwen|kimi) run_one "$M" ;;
+  qwen|kimi|Qwen3.5-35B-A3B-FP8|Kimi-K2.5-NVFP4) run_one "$M" ;;
   all)       run_one qwen && run_one kimi ;;
   *) echo "usage: run_all.sh <qwen|kimi|all>"; exit 1 ;;
 esac

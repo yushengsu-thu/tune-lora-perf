@@ -29,11 +29,11 @@ checkout (the GB200 flow never reinstalled; use it when the ref's deps changed).
 |---|---|
 | `Qwen3.5-35B-A3B-FP8-pod.yaml` | single-node TP4/EP4 qwen pod (4 GPU). `ID=$(date +%Y%m%d-%H%M%S) envsubst < Qwen3.5-35B-A3B-FP8-pod.yaml \| kubectl apply -f -` |
 | `Qwen3.5-35B-A3B-FP8-tp1-pods.yaml` | tp1 pr/oss pods (1 GPU each), `kubectl apply -f` directly |
-| `kimi-gb300.yaml` | headless svc + ComputeDomain + head/worker kimi pods (2×4 GPU MNNVL) |
+| `Kimi-K2.5-NVFP4-gb300.yaml` | headless svc + ComputeDomain + head/worker kimi pods (2×4 GPU MNNVL) |
 | `Qwen3.5-35B-A3B-FP8_run_gb300.sh` | `bash Qwen3.5-35B-A3B-FP8_run_gb300.sh <full-lora-opti\|main> <TAG>` |
 | `Qwen3.5-35B-A3B-FP8_base_gb300.sh` | `bash Qwen3.5-35B-A3B-FP8_base_gb300.sh <TAG>` — oss no-LoRA ceiling (%-denominator) |
 | `Qwen3.5-35B-A3B-FP8_tp1_gb300.sh` | `bash Qwen3.5-35B-A3B-FP8_tp1_gb300.sh <full-lora-opti\|main-base> <TAG>` |
-| `kimi_run_gb300.sh` | `bash kimi_run_gb300.sh <worker\|head> <full-lora-opti\|main> <LORA> <BACKEND> <DISTADDR\|-> <TAG> <full\|gsm8k_only>` — `-` = the kimi-gb300.yaml head FQDN. **Worker FIRST, then head.** |
+| `Kimi-K2.5-NVFP4_run_gb300.sh` | `bash Kimi-K2.5-NVFP4_run_gb300.sh <worker\|head> <full-lora-opti\|main> <LORA> <BACKEND> <DISTADDR\|-> <TAG> <full\|gsm8k_only>` — `-` = the Kimi-K2.5-NVFP4-gb300.yaml head FQDN. **Worker FIRST, then head.** |
 
 ## Run order (qwen, one 4-GPU pod)
 
@@ -51,10 +51,10 @@ kubectl --context gcp-radixark-02 exec -i <pod> -- bash -c 'cat > /tmp/Qwen3.5-3
 ## Kimi run order
 
 ```bash
-kubectl --context gcp-radixark-02 apply -f kimi-gb300.yaml      # svc + CD + 2 pods
+kubectl --context gcp-radixark-02 apply -f Kimi-K2.5-NVFP4-gb300.yaml      # svc + CD + 2 pods
 # ~600G download per pod — watch /root/setup.log on both. Then per cell:
-#   1. worker pod:  bash /tmp/kimi_run_gb300.sh worker <REF> <LORA> <BACKEND> - <TAG> full
-#   2. head pod:    bash /tmp/kimi_run_gb300.sh head   <REF> <LORA> <BACKEND> - <TAG> full
+#   1. worker pod:  bash /tmp/Kimi-K2.5-NVFP4_run_gb300.sh worker <REF> <LORA> <BACKEND> - <TAG> full
+#   2. head pod:    bash /tmp/Kimi-K2.5-NVFP4_run_gb300.sh head   <REF> <LORA> <BACKEND> - <TAG> full
 ```
 
 ## Guardrails (unchanged from `../README.md`)

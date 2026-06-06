@@ -7,7 +7,7 @@ description: >-
   and CPU+GPU torch profiling (cuda-graph on + off), producing one downloadable summary.
   Model-agnostic driver (scripts/run_regression.sh) + per-platform model packs
   (<platform>/models/<m>/{model.env,pod.yaml,hooks.sh,MODEL.md}). Supported today:
-  gb200/kimi (Kimi-K2.5-NVFP4, 2-node MNNVL), gb200/Qwen3.5-35B-A3B-FP8 (Qwen3.5-35B-A3B-FP8, 1 node
+  gb200/Kimi-K2.5-NVFP4 (Kimi-K2.5-NVFP4, 2-node MNNVL), gb200/Qwen3.5-35B-A3B-FP8 (Qwen3.5-35B-A3B-FP8, 1 node
   tp4/ep4, leira) and gb300/models/Qwen3.5-35B-A3B-FP8 (same model on GB300/sm_103, gcp-radixark-02).
   Use when the user asks to acc-and-bench-and-profile a serving change — a LoRA toggle, a
   MoE/kernel backend swap, an env-var toggle, or a PR — on one of these models. Read
@@ -45,7 +45,7 @@ a per-endpoint prompt-check table, and kernel-structure profiler traces.
 >   cluster was wiped mid-attempt (all nodes gone) — and is covered transitively: the merge
 >   commit's `trtllm_lora_temp` code is byte-identical to `full-lora-opti@ac51ef5ed`, which DID
 >   pass the full GB200 e2e above.
-> - **kimi 2-node paths NOW exercised live** (gb300/kimi run, 2026-06-06): DNS rendezvous,
+> - **kimi 2-node paths NOW exercised live** (gb300/Kimi-K2.5-NVFP4 run, 2026-06-06): DNS rendezvous,
 >   worker-first start, cross-pod 8-rank trace pull, drop_caches + flashinfer hooks, and the
 >   launch retry (recovered a real transient rank death). Full e2e PASS — 81.3/88.5/93.3% of
 >   ceiling, matching the PR's claim; MNNVL-on-GKE (ComputeDomain/DRA) confirmed working.
@@ -62,7 +62,7 @@ regression/
 │   ├── summary.py            # acc-diff + perf-delta + 5-metric speed table -> summary.md
 │   ├── build_readme.py       # per-run README for publishing
 │   └── publish.sh            # small files -> git commit; traces -> GitHub Release (append-only)
-├── gb200/                    # GB200 platform (leira): run_kimi.sh, run_Qwen3.5-35B-A3B-FP8.sh + models/
+├── gb200/                    # GB200 platform (leira): run_Kimi-K2.5-NVFP4.sh, run_Qwen3.5-35B-A3B-FP8.sh + models/
 └── gb300/                    # GB300 platform (gcp-radixark-02): gb300/run_Qwen3.5-35B-A3B-FP8.sh + models/
     └── models/<m>/           # per-model parameter pack (the ONLY place model specifics live)
         ├── model.env         # VALUES: topology, paths, flags, profile recipe, tolerances
@@ -161,11 +161,11 @@ the one graph-on launch.
 
 Model hooks (optional, in `models/<m>/hooks.sh`): `hook_post_setup` runs once after prewarm
 (Qwen3.5-35B-A3B-FP8: record layer count); `hook_between_cells` runs before each cell's first launch
-(kimi: ghost-HBM drop_caches).
+(Kimi-K2.5-NVFP4: ghost-HBM drop_caches).
 
 **Dry-run** (verify the assembled launch surface without touching the cluster):
 ```bash
-DRY_RUN=1 bash regression/gb200/run_kimi.sh     # prints PODS / COMMON / per-cell flags+envs and exits
+DRY_RUN=1 bash regression/gb200/run_Kimi-K2.5-NVFP4.sh     # prints PODS / COMMON / per-cell flags+envs and exits
 ```
 
 ## Prompt check (always runs, per cell → `<cell>/prompts/prompts.md`)
@@ -186,7 +186,7 @@ kubectl exec <pod> -- python3 /tmp/prompts_check.py --lora alpha --model <model-
 ```bash
 kubectl config use-context gcp-radixark-02   # gb300. gb200 used `leira` — that cluster is GONE
 export ID=<dns-safe-id>                       # ASK the user if not given
-PLAT=gb300; MODEL=Qwen3.5-35B-A3B-FP8                      # or gb300/kimi; gb200 packs are historical (leira gone)
+PLAT=gb300; MODEL=Qwen3.5-35B-A3B-FP8                      # or gb300/Kimi-K2.5-NVFP4; gb200 packs are historical (leira gone)
 export RUN_ROOT="$HOME/Downloads/sglang_${MODEL}_reg_${ID}_$(date +%Y%m%d_%H%M%S)"; mkdir -p "$RUN_ROOT"
 REG=<path-to>/regression                      # repo checkout or ~/.claude/skills/regression
 ```
@@ -197,7 +197,7 @@ private LoRA repos).
 
 ```bash
 sed "s/\${ID}/${ID}/g" "$REG/$PLAT/models/$MODEL/pod.yaml" | kubectl apply -f -
-# kimi (2 pods):   kubectl wait --for=condition=Ready pod/mnnvl-kimi-${ID}-0 pod/mnnvl-kimi-${ID}-1 --timeout=25m
+# Kimi-K2.5-NVFP4 (2 pods):   kubectl wait --for=condition=Ready pod/mnnvl-kimi-${ID}-0 pod/mnnvl-kimi-${ID}-1 --timeout=25m
 # Qwen3.5-35B-A3B-FP8 (1 pod, gb300): kubectl wait --for=condition=Ready pod/sglang-gb300-qwen3vl-yushengsu-${ID} --timeout=20m
 #                                      (gb200's pod name was sglang-qwen35-${ID})
 ```
@@ -283,7 +283,7 @@ so the summary shows decode is healthy (no `!!!!`).
 Small artifacts (acc/bench/prompts/README, ~50 KB) → a new commit at
 `<RESULTS_REPO>/runs/<RUN_TAG>/`; big traces → a GitHub Release tagged `<RUN_TAG>`
 (one `<cell>_traces.tar.gz` per cell). Default tag: `<tag_prefix>-<variant-shorthash>-<timestamp>`
-(prefix from `model.env`, e.g. `kimi-reg` / `Qwen3.5-35B-A3B-FP8-reg`). Append-only — prior runs/releases stay.
+(prefix from `model.env`, e.g. `Kimi-K2.5-NVFP4-reg` / `Qwen3.5-35B-A3B-FP8-reg`). Append-only — prior runs/releases stay.
 
 ```bash
 # Set BEFORE launching run_<model>.sh — the driver auto-calls publish.sh on success:
@@ -304,7 +304,7 @@ sed "s/\${ID}/${ID}/g" "$REG/$PLAT/models/$MODEL/pod.yaml" | kubectl delete -f -
 ## Operational notes
 
 - **Ghost GPU memory is page cache, not a leak** (GB200 exposes HBM as cpu-less NUMA). Prevented
-  by `numactl --membind=0,1` on downloads + launch; cleaned by drop_caches (kimi: automatic via
+  by `numactl --membind=0,1` on downloads + launch; cleaned by drop_caches (Kimi-K2.5-NVFP4: automatic via
   `hook_between_cells`). Applied identically to both cells so it can't bias the comparison.
 - **The commit under test must run on the image.** If a cell won't start, that cell is blocked.
   A common skew is a `deep_gemm` API mismatch during JIT warmup — fix by testing a compatible

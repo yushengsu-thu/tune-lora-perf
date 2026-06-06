@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# GB300 (gcp-radixark-02) port of ../gb200/kimi_run.sh — 2-node MNNVL TP8/EP8 via the
-# kimi-gb300.yaml pods (ComputeDomain/DRA IMEX). Deltas vs GB200:
+# GB300 (gcp-radixark-02) port of ../gb200/Kimi-K2.5-NVFP4_run.sh — 2-node MNNVL TP8/EP8 via the
+# Kimi-K2.5-NVFP4-gb300.yaml pods (ComputeDomain/DRA IMEX). Deltas vs GB200:
 #   1. READY wait 180->240 iters (48 min): cold sm_103 JIT for the kimi gate / moe-align /
 #      trtllm_lora_temp kernels (persists afterwards via the dot-cache hostPath).
 #   2. flashinfer pin guard (branch pyproject's 0.6.12 breaks the sm_103 JIT vs the pinned
 #      image's 0.6.11 jit-cache). REINSTALL=1 re-runs `pip install -e python` after checkout.
-#   3. DISTADDR accepts "-" -> the kimi-gb300.yaml head FQDN.
-# Usage: kimi_run_gb300.sh <ROLE=worker|head> <REF=full-lora-opti|main> <LORA=0|1> <BACKEND> <DISTADDR|-> <TAG> <TESTS=full|gsm8k_only>
+#   3. DISTADDR accepts "-" -> the Kimi-K2.5-NVFP4-gb300.yaml head FQDN.
+# Usage: Kimi-K2.5-NVFP4_run_gb300.sh <ROLE=worker|head> <REF=full-lora-opti|main> <LORA=0|1> <BACKEND> <DISTADDR|-> <TAG> <TESTS=full|gsm8k_only>
 # Run the WORKER pod FIRST, then the HEAD (head runs coherence+bench+gsm8k).
 ROLE=$1; REF=$2; LORA=$3; BACKEND=$4; DISTADDR=$5; TAG=$6; TESTS=${7:-full}
 [ "$DISTADDR" = "-" ] && DISTADDR=mnnvl-kimi-gb300-0.mnnvl-kimi-gb300-head.default.svc.cluster.local:20000

@@ -63,6 +63,6 @@ the LoRA kernels to consume quantized inputs.
   (10–25 min). The qwen trtllm JIT *is* disk-cached (dot-cache hostPath).
 - kimi weights live on ephemeral `/root` (the 95G stateful partition can't hold 600G) →
   re-download per pod creation.
-- `kimi_run_gb300.sh` does `git checkout -f` at start — use `kimi_run_nockout.sh`-style
+- `Kimi-K2.5-NVFP4_run_gb300.sh` does `git checkout -f` at start — use `kimi_run_nockout.sh`-style
   variant (drop the checkout) when a working-tree patch must survive.
 - Failure-detection greps must include lowercase `serve: error` (argparse failures).

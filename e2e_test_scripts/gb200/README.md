@@ -16,12 +16,12 @@ port fixed both).
 | `Qwen3.5-35B-A3B-FP8_run.sh` | `bash Qwen3.5-35B-A3B-FP8_run.sh <full-lora-opti\|main> <TAG>` — Qwen TP4/EP4; PR pod runs sgl-lora + triton-lora + nolora, oss pod runs triton-lora + nolora. |
 | `Qwen3.5-35B-A3B-FP8_base.sh` | oss no-LoRA **ceiling** (origin/main, default backend, no `--moe-runner-backend`, no LoRA) — the %-denominator. |
 | `Qwen3.5-35B-A3B-FP8_tp1_v2.sh` | `bash Qwen3.5-35B-A3B-FP8_tp1_v2.sh <full-lora-opti\|main-base> <TAG>` — single-GPU tp1 (PR sgl-lora / oss default). |
-| `kimi_run.sh` | `bash kimi_run.sh <worker\|head> <full-lora-opti\|main> <LORA=0\|1> <BACKEND> <DISTADDR> <TAG> <full\|gsm8k_only>` — **2-node MNNVL TP8/EP8; run the worker pod FIRST, then the head** (head runs coherence+bench+gsm8k). |
+| `Kimi-K2.5-NVFP4_run.sh` | `bash Kimi-K2.5-NVFP4_run.sh <worker\|head> <full-lora-opti\|main> <LORA=0\|1> <BACKEND> <DISTADDR> <TAG> <full\|gsm8k_only>` — **2-node MNNVL TP8/EP8; run the worker pod FIRST, then the head** (head runs coherence+bench+gsm8k). |
 
 ## Pod YAMLs (env setup)
 | file | what it is |
 |---|---|
-| `kimi-rf.yaml` | Kimi 2-node MNNVL pod spec (head+worker, imex-channel ComputeDomain, 4×GB200, hf-token secret, self-download setup.sh). |
+| `Kimi-K2.5-NVFP4-rf.yaml` | Kimi 2-node MNNVL pod spec (head+worker, imex-channel ComputeDomain, 4×GB200, hf-token secret, self-download setup.sh). |
 | `flo-Qwen3.5-35B-A3B-FP8-tp1-pods.yaml` | Qwen single-node tp1 pod spec (lorapr pods, `runtimeClassName: nvidia`, hostPath `/mnt/nvme-b`). |
 
 ## GB200 reference numbers (for comparison with gb300/results/RESULTS.md)

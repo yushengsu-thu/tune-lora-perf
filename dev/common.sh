@@ -7,11 +7,10 @@
 
 set -uo pipefail
 
-MODEL="${1:?usage: $(basename "${BASH_SOURCE[1]:-script}") <qwen|kimi>}"
+MODEL="${1:?usage: $(basename "${BASH_SOURCE[1]:-script}") <qwen|kimi>  (or the full names Qwen3.5-35B-A3B-FP8 | Kimi-K2.5-NVFP4)}"
 DEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$DEV_DIR")"
 STATE_DIR="${DEV_DIR}/.state"; mkdir -p "$STATE_DIR"
-STATE="${STATE_DIR}/${MODEL}.env"
 
 KC="kubectl --context gcp-radixark-02"   # pin the context per-command; never mutate the user's
 
@@ -22,7 +21,8 @@ FLASHINFER_PIN="${FLASHINFER_PIN:-0.6.11.post1}"  # must match the pinned image 
 
 # ---------- per-model config (values from the validated regression packs) ----------
 case "$MODEL" in
-  qwen)
+  qwen|Qwen3.5-35B-A3B-FP8)
+    MODEL="Qwen3.5-35B-A3B-FP8"          # 'qwen' is the CLI shorthand; paths use the full name
     PACK="${ROOT_DIR}/regression/gb300/models/Qwen3.5-35B-A3B-FP8"
     NNODES=1; TP=4; EP=4; GPUS_PER_NODE=4
     POD_PREFIX="sglang-gb300-qwen3vl-yushengsu"
@@ -46,8 +46,9 @@ SGLANG_OPT_LORA_SHARED_ADD_OVERLAP=1 SGLANG_OPT_LORA_CUBLAS=1"
     READY_TIMEOUT_MIN=45                 # first sm_103 cold JIT can exceed 30 min
     POD_READY_TIMEOUT=20m
     ;;
-  kimi)
-    PACK="${ROOT_DIR}/regression/gb300/models/kimi"
+  kimi|Kimi-K2.5-NVFP4)
+    MODEL="Kimi-K2.5-NVFP4"              # 'kimi' is the CLI shorthand; paths use the full name
+    PACK="${ROOT_DIR}/regression/gb300/models/Kimi-K2.5-NVFP4"
     NNODES=2; TP=8; EP=8; GPUS_PER_NODE=4
     POD_PREFIX="sglang-gb300-kimi-yushengsu"
     MODEL_PATH=/root/Kimi-K2.5-NVFP4
@@ -62,7 +63,7 @@ SGLANG_ENABLE_TP_MEMORY_INBALANCE_CHECK=false PYTORCH_CUDA_ALLOC_CONF=expandable
 --enable-lora --max-loras-per-batch 1 --max-lora-rank 16 --lora-backend triton \
 --lora-paths ${LORA_NAME}=${LORA_PATH}"
     # PER_TOKEN_ACTIVATION=1 REQUIRED (else lora garbage); SWIGLU_FUSION=0 REQUIRED (fusion
-    # bypasses the LoRA delta under --enable-lora). See regression/gb300/models/kimi/MODEL.md.
+    # bypasses the LoRA delta under --enable-lora). See regression/gb300/models/Kimi-K2.5-NVFP4/MODEL.md.
     LORA_ENVS="SGLANG_EXPERIMENTAL_LORA_OPTI=1 SGLANG_FLASHINFER_NVFP4_PER_TOKEN_ACTIVATION=1 \
 SGLANG_ENABLE_NVFP4_GEMM_SWIGLU_FUSION=0 SGLANG_OPT_USE_JIT_KERNEL_KIMI_GATE=1 \
 SGLANG_OPT_USE_JIT_KERNEL_MOE_ALIGN=1 SGLANG_OPT_FUSED_PERMUTE_QUANT=1 \
@@ -74,8 +75,9 @@ SGLANG_OPT_FUSED_MOE_ACTIVATION_QUANT_FUSE=1"
     READY_TIMEOUT_MIN=50                 # cold fp4 autotune is process-local (re-tunes every launch)
     POD_READY_TIMEOUT=25m
     ;;
-  *) echo "ERROR: unknown model '$MODEL' (qwen|kimi)" >&2; exit 1 ;;
+  *) echo "ERROR: unknown model '$MODEL' (qwen|kimi or Qwen3.5-35B-A3B-FP8|Kimi-K2.5-NVFP4)" >&2; exit 1 ;;
 esac
+STATE="${STATE_DIR}/${MODEL}.env"        # keyed by the FULL model name (after shorthand normalization)
 
 # ---------- state (written by 1_launch_node.sh; read by everything after) ----------
 load_state(){ [ -f "$STATE" ] || { echo "ERROR: no state for '$MODEL' — run 1_launch_node.sh $MODEL first" >&2; exit 1; }
