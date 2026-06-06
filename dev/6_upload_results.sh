@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# 5. Upload the run results to the GitHub repo `lora_perf_lora_profile`
+# 6. Upload the run results to the GitHub repo `lora_perf_lora_profile`
 #    (created automatically, private, if it doesn't exist).
 #    Input : model name (qwen|kimi); $RUN_DIR from step 3/4 state.
 #    Output: a commit at <repo>/runs/<model>/<DATE>-<TIME>/ with bench + profiles.
 #    Verify: the pushed path is visible via the GitHub API.
 . "$(dirname "$0")/common.sh" "${1:-}"
 load_state
-[ -n "${RUN_DIR:-}" ] && [ -d "$RUN_DIR" ] || { echo "ERROR: no RUN_DIR — run step 3/4 first"; exit 1; }
+[ -n "${RUN_DIR:-}" ] && [ -d "$RUN_DIR" ] || { echo "ERROR: no RUN_DIR — run step 3/4/5 first"; exit 1; }
 
 OWNER=$(gh api user --jq .login)
 REPO="${RESULTS_REPO:-${OWNER}/lora_perf_lora_profile}"
 RUN_TAG="${MODEL}/$(basename "$RUN_DIR")"
-echo "== [5/upload] $RUN_DIR  ->  ${REPO}/runs/${RUN_TAG}"
+echo "== [6/upload] $RUN_DIR  ->  ${REPO}/runs/${RUN_TAG}"
 
 # repo: check / create
 if ! gh repo view "$REPO" >/dev/null 2>&1; then
@@ -46,4 +46,4 @@ git -C "$WORK" push -q origin HEAD:main || git -C "$WORK" push -q origin HEAD:ma
 # ---- verify via API ----
 gh api "repos/${REPO}/contents/runs/${RUN_TAG}" --jq '.[].name' >/dev/null \
   || { echo "ERROR: pushed path not visible via API"; exit 1; }
-echo "== [5/upload] PASS — https://github.com/${REPO}/tree/main/runs/${RUN_TAG}"
+echo "== [6/upload] PASS — https://github.com/${REPO}/tree/main/runs/${RUN_TAG}"

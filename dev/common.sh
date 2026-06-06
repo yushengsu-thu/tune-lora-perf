@@ -40,6 +40,7 @@ case "$MODEL" in
     LORA_ENVS="SGLANG_EXPERIMENTAL_LORA_OPTI=1 SGLANG_OPT_LORA_OVERLAP_MAIN_ALLOC=1 \
 SGLANG_OPT_LORA_SHARED_ADD_OVERLAP=1 SGLANG_OPT_LORA_CUBLAS=1"
     BENCH_BS="16 32 64"; BENCH_IN=2048; BENCH_OUT=2048
+    ACC_TOL=0.05                         # UNMEASURED placeholder (regression model.env) — alpha is near-identity
     PROF_RECIPE="64 8 24 48"             # bs start-step steps output-len (forwards 8-31 all decode)
     TRACE_RANKS="0 1 2 3"
     READY_TIMEOUT_MIN=45                 # first sm_103 cold JIT can exceed 30 min
@@ -67,6 +68,7 @@ SGLANG_ENABLE_NVFP4_GEMM_SWIGLU_FUSION=0 SGLANG_OPT_USE_JIT_KERNEL_KIMI_GATE=1 \
 SGLANG_OPT_USE_JIT_KERNEL_MOE_ALIGN=1 SGLANG_OPT_FUSED_PERMUTE_QUANT=1 \
 SGLANG_OPT_FUSED_MOE_ACTIVATION_QUANT_FUSE=1"
     BENCH_BS="16 32 64"; BENCH_IN=2048; BENCH_OUT=2048
+    ACC_TOL=0.30                         # MEASURED atomic-add noise floor (regression kimi MODEL.md)
     PROF_RECIPE="16 4 12 64"
     TRACE_RANKS="0 1 2 3 4 5 6 7"        # 8 ranks across BOTH pods (rank/4 -> pod index)
     READY_TIMEOUT_MIN=50                 # cold fp4 autotune is process-local (re-tunes every launch)

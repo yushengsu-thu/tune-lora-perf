@@ -13,10 +13,11 @@ dev/
 ├── 1_launch_node.sh     # launch pod(s), wait for weights+install, verify GPUs
 ├── 2_upload_code.sh     # push the CURRENT local sglang branch to the pods + pip install -e
 ├── 3_run_benchmark.sh   # LoRA vs no-LoRA bench → input/extend, decode, e2e table
-├── 4_run_profile.sh     # LoRA vs no-LoRA torch profiles → <DATE>-<TIME>/{lora,no-lora}/
-├── 5_upload_results.sh  # push the run dir to github.com/<you>/lora_perf_lora_profile
+├── 4_run_acc.sh         # LoRA vs no-LoRA accuracy → per-token logprob diff vs ACC_TOL
+├── 5_run_profile.sh     # LoRA vs no-LoRA torch profiles → <DATE>-<TIME>/{lora,no-lora}/
+├── 6_upload_results.sh  # push the run dir to github.com/<you>/lora_perf_lora_profile
 ├── run_all.sh           # the whole chain: run_all.sh <qwen|kimi|all>
-├── .state/<model>.env   # pod ID + RUN_DIR handoff between steps (written by 1, read by 2-5)
+├── .state/<model>.env   # pod ID + RUN_DIR handoff between steps (written by 1, read by 2-6)
 └── results/<model>/<DATE>-<TIME>/   # everything a run produces, locally
 ```
 
@@ -25,7 +26,7 @@ dev/
 - `kubectl` context **`gcp-radixark-02`** works (`kubectl --context gcp-radixark-02 get nodes`).
   All scripts pin this context per-command — they never touch your current context, and never
   use leira (gone).
-- `gh auth status` OK (step 5 creates/pushes the results repo).
+- `gh auth status` OK (step 6 creates/pushes the results repo).
 - Local sglang checkout at `/Users/yushengsu/Downloads/tml/sglang` (override: `SGLANG_SRC=…`);
   the **current branch's committed HEAD** is what gets uploaded.
 - The `hf-token-yanbin` secret exists on the cluster (private LoRA adapters — see
@@ -37,9 +38,10 @@ dev/
 bash dev/run_all.sh qwen     # or: kimi, or: all
 ```
 
-Total ≈ 2–4 h per model (first-ever run on a node also pays the weight download and the cold
+Total ≈ 2–5 h per model (first-ever run on a node also pays the weight download and the cold
 sm_103 JIT/autotune — Qwen ~40GB+45min JIT once per node; Kimi ~600GB to ephemeral disk and
-fp4 autotune ~10-25 min on EVERY launch).
+fp4 autotune ~10-25 min on EVERY launch). Steps 3/4/5 each launch their own servers (2 cells
+each = 6 launches total) — that's the price of standalone, individually-rerunnable steps.
 
 ## The steps (inputs / outputs)
 
@@ -70,27 +72,39 @@ fp4 autotune ~10-25 min on EVERY launch).
 | output | `results/<model>/<DATE>-<TIME>/bench/{no-lora,lora}/bs<bs>.{jsonl,log,serverlog}` + `bench/summary.md` — table of **input/extend tok/s, decode tok/s, ITL ms, e2e s** + lora/no-lora decode ratio |
 | verify | every `bs<bs>.jsonl` parses for both cells + per-cell post-load coherence (no `!!!!` decode collapse) |
 
-### 4. `4_run_profile.sh <qwen|kimi>` — LoRA vs no-LoRA profile
+### 4. `4_run_acc.sh <qwen|kimi>` — LoRA vs no-LoRA accuracy
+
+| | |
+|---|---|
+| input | state; `${LORA_PATH}/compare_sample_train_data.pt` (fixed token sequences shipped inside the adapter repo; override: `ACC_DATA=…`) |
+| does | per cell: launch graph-ON server → teacher-forced **prefill-only** logprob capture (`/generate` with `max_new_tokens=0` + `return_logprob`) → coherence probe → kill; then diff the two cells' per-token logprobs locally |
+| output | `results/<model>/<DATE>-<TIME>/acc/{no-lora,lora}/logprobs.json` + `acc/summary.md` — n, mean/max abs diff, p50/p95, half-MSE, verdict vs `ACC_TOL` (qwen 0.05 placeholder; kimi 0.30 measured noise floor) |
+| verify | both logprob sets captured + equal length + per-cell coherence. `max > ACC_TOL` is a **warning** by default (alpha is a near-identity adapter so the diff ≈ LoRA-path numerical noise; a custom adapter legitimately diverges) — `ACC_STRICT=1` makes it fail |
+
+> acc is prefill-only — it **cannot** see decode-accumulating garbage (proven: a corrupted-decode
+> server scored clean acc while generating `!!!!`). The per-cell coherence probe is the decode gate.
+
+### 5. `5_run_profile.sh <qwen|kimi>` — LoRA vs no-LoRA profile
 
 | | |
 |---|---|
 | input | state; profile recipe per model (qwen `bs64 start8 steps24`, kimi `bs16 start4 steps12` — clean-decode windows) |
 | does | per cell: launch graph-ON server → `bench_one_batch_server --profile` (CPU+GPU) → pull every per-rank trace (gzip-verified, kimi ranks 4-7 pulled from the worker pod) |
-| output | `results/<model>/<DATE>-<TIME>/{no-lora,lora}/bs<bs>-TP-<r>.trace.json.gz` (+ `bench.log`) — the `<DATE>-<TIME>` dir holds both cells' profiles, shared with step 3's bench |
+| output | `results/<model>/<DATE>-<TIME>/{no-lora,lora}/bs<bs>-TP-<r>.trace.json.gz` (+ `bench.log`) — the `<DATE>-<TIME>` dir holds both cells' profiles, shared with steps 3/4 |
 | verify | every expected trace exists locally and passes `gzip -t` |
 
-### 5. `5_upload_results.sh <qwen|kimi>` — publish
+### 6. `6_upload_results.sh <qwen|kimi>` — publish
 
 | | |
 |---|---|
-| input | the run dir from step 3/4 state |
+| input | the run dir from step 3/4/5 state |
 | does | check `github.com/<you>/lora_perf_lora_profile` exists (else `gh repo create` private) → commit the run dir to `runs/<model>/<DATE>-<TIME>/` → push (files >95MB skipped + listed) |
 | output | `https://github.com/<you>/lora_perf_lora_profile/tree/main/runs/<model>/<DATE>-<TIME>` |
 | verify | pushed path readable via the GitHub API |
 
-### 6. `run_all.sh <qwen|kimi|all>` — everything
+### `run_all.sh <qwen|kimi|all>` — everything
 
-Runs 1→2→3→4→5; each step's own verification gates the next; first failure aborts.
+Runs 1→2→3→4→5→6; each step's own verification gates the next; first failure aborts.
 
 ## Notes
 

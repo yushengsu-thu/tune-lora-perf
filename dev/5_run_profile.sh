@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 4. Profile LoRA vs no-LoRA (torch profiler, CPU+GPU, cuda-graph ON = real timing).
+# 5. Profile LoRA vs no-LoRA (torch profiler, CPU+GPU, cuda-graph ON = real timing).
 #    Input : model name (qwen|kimi); pods from step 1 running the code from step 2.
 #    Output: $RUN_DIR/  (= dev/results/<model>/<DATE>-<TIME>/, shared with step 3)
 #              ├── no-lora/  bs<bs>-TP-<r>.trace.json.gz  (+ bench.log of the profiled run)
@@ -9,7 +9,7 @@
 load_state; ensure_run_dir
 OUTROOT=/tmp/dev_run
 read -r P_BS P_START P_STEPS P_OUTLEN <<< "$PROF_RECIPE"
-echo "== [4/profile] $MODEL  bs=${P_BS} start=${P_START} steps=${P_STEPS} outlen=${P_OUTLEN}  -> ${RUN_DIR}/{no-lora,lora}"
+echo "== [5/profile] $MODEL  bs=${P_BS} start=${P_START} steps=${P_STEPS} outlen=${P_OUTLEN}  -> ${RUN_DIR}/{no-lora,lora}"
 
 FAIL=0
 for CELL in no-lora lora; do
@@ -46,4 +46,4 @@ for CELL in no-lora lora; do
   done
 done
 [ "$FAIL" = 0 ] || exit 1
-echo "== [4/profile] PASS — traces in ${RUN_DIR}/{no-lora,lora}/"
+echo "== [5/profile] PASS — traces in ${RUN_DIR}/{no-lora,lora}/"
