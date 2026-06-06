@@ -208,8 +208,10 @@ Set the two refs (local branch/commit or GitHub URL), build both bundles, push t
 
 ```bash
 REPO=<local sglang checkout to build bundles from>
-BASE_SRC=origin/main                   # control — local ref OR GitHub URL
-VARIANT_SRC=jybsuper/full-lora-opti    # candidate — PR #27329; may equal BASE_SRC (testing only a flag/env)
+# PINNED sglang baseline: the PR #27329 merge commit on sgl-project main (the fast LoRA path is
+# IN main as of this commit). Same-commit A/B — the cells differ only by flags/envs.
+BASE_SRC=c9f582a272dcc7109bf7da584867f47995602035      # control (no-LoRA, stock backend)
+VARIANT_SRC=c9f582a272dcc7109bf7da584867f47995602035   # candidate (LoRA + experimental backend + opt envs)
 mkdir -p "$RUN_ROOT/$MODEL"
 git -C "$REPO" fetch -q origin main
 build(){ git -C "$REPO" branch -f __bench_target "$2"

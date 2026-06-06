@@ -2,9 +2,11 @@
 
 LoRA performance tuning skills and regression/benchmark workflows for SGLang.
 
-All current development targets this PR: **[sgl-project/sglang#27329](https://github.com/sgl-project/sglang/pull/27329)**
-(branch [`jybsuper:full-lora-opti`](https://github.com/jybsuper/sglang/tree/full-lora-opti)) — the experimental fast LoRA
-path gated behind `SGLANG_EXPERIMENTAL_LORA_OPTI=1` + `--moe-runner-backend experimental_sgl_trtllm`.
+All current development targets **[sgl-project/sglang#27329](https://github.com/sgl-project/sglang/pull/27329)** — the
+experimental fast LoRA path (`SGLANG_EXPERIMENTAL_LORA_OPTI=1` + `--moe-runner-backend experimental_sgl_trtllm`) —
+**now MERGED into sglang main**. The pinned sglang baseline is the merge commit
+[`c9f582a27`](https://github.com/sgl-project/sglang/commit/c9f582a272dcc7109bf7da584867f47995602035): both regression
+cells run this exact commit (base = no-LoRA stock backend, variant = the fast path), differing only by flags/envs.
 
 ## Contents
 
@@ -79,7 +81,8 @@ path gated behind `SGLANG_EXPERIMENTAL_LORA_OPTI=1` + `--moe-runner-backend expe
 
    ## 3. inject the base + variant commits (git bundles — exact commits, no stale-branch risk)
    REPO=<local sglang checkout>
-   BASE_SRC=origin/main; VARIANT_SRC=jybsuper/full-lora-opti     # PR #27329
+   BASE_SRC=c9f582a272dcc7109bf7da584867f47995602035             # pinned sglang baseline (PR #27329 merge commit)
+   VARIANT_SRC=c9f582a272dcc7109bf7da584867f47995602035          # same commit — cells differ only by flags/envs
    git -C "$REPO" fetch -q origin main
    build(){ git -C "$REPO" branch -f __bench_target "$2"
      mb=$(git -C "$REPO" merge-base origin/main __bench_target); head=$(git -C "$REPO" rev-parse __bench_target)

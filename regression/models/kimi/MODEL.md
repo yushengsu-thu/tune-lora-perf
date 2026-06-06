@@ -50,12 +50,14 @@ drop_caches). Topology: **2 nodes × 4 GB200 (MNNVL), `--tp 8`, no EP, NVFP4**.
 
 ## Env vars & serving configs (the opt-stack matrix — read before editing cells)
 
-> **Branch context (2026-06-05): development targets
-> [sgl-project/sglang#27329](https://github.com/sgl-project/sglang/pull/27329)
-> (`jybsuper:full-lora-opti`)** — the experimental fast LoRA path, gated behind the master
+> **Branch context (2026-06-06): PR
+> [sgl-project/sglang#27329](https://github.com/sgl-project/sglang/pull/27329) is MERGED into
+> main at [`c9f582a27`](https://github.com/sgl-project/sglang/commit/c9f582a272dcc7109bf7da584867f47995602035)
+> — the pinned sglang baseline for both cells.** The fast LoRA path is gated behind the master
 > switch `SGLANG_EXPERIMENTAL_LORA_OPTI` (default **off** ⇒ upstream byte-identical) and
-> selected with `--moe-runner-backend experimental_sgl_trtllm`. New code is isolated in
-> `*/trtllm_lora_temp/`; env flags / backend name may still change during the upstream refactor.
+> selected with `--moe-runner-backend experimental_sgl_trtllm`; code is isolated in
+> `*/trtllm_lora_temp/` (byte-identical to the validated `full-lora-opti@ac51ef5ed`, so the
+> image digest + flashinfer 0.6.11 pins still apply — see hooks.sh).
 > (The older `lora-opti`-era notes — unconditional two-stream, removed down-overlap `cbb6e779`,
 > SHRINK_TUNE/SPLIT_K knobs — applied to `lora-opti@7e9981f10e`; on a 2026-06-05 validation run,
 > `lora-opti@867f2ca413fa` with the old env set produced LoRA decode garbage — use the PR branch.)

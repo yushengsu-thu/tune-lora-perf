@@ -42,13 +42,15 @@ robustness: `../../SKILL.md`. Parameters: `model.env` (launch flags from
 
 ## Env vars & serving configs (qwen3.5 opt stack)
 
-> **Branch context (2026-06-05): development targets
-> [sgl-project/sglang#27329](https://github.com/sgl-project/sglang/pull/27329)
-> (`jybsuper:full-lora-opti`)** — the experimental fast LoRA path, gated behind the master
+> **Branch context (2026-06-06): PR
+> [sgl-project/sglang#27329](https://github.com/sgl-project/sglang/pull/27329) is MERGED into
+> main at [`c9f582a27`](https://github.com/sgl-project/sglang/commit/c9f582a272dcc7109bf7da584867f47995602035)
+> — the pinned sglang baseline for both cells.** The fast LoRA path is gated behind the master
 > switch `SGLANG_EXPERIMENTAL_LORA_OPTI` (default **off** ⇒ upstream byte-identical) and
-> selected with `--moe-runner-backend experimental_sgl_trtllm`. On a 2026-06-05 validation run,
-> the older `lora-opti@867f2ca413fa` with the old env set produced LoRA decode garbage
-> (`Thinking!!!!`) despite MAIN_ALLOC=1 — use the PR branch.
+> selected with `--moe-runner-backend experimental_sgl_trtllm` (`trtllm_lora_temp` code is
+> byte-identical to the validated `full-lora-opti@ac51ef5ed` — image/flashinfer pins still
+> apply). Historical: `lora-opti@867f2ca413fa` produced LoRA decode garbage (`Thinking!!!!`)
+> despite MAIN_ALLOC=1 — never use that branch.
 
 No MNNVL/NCCL group needed (single node). `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` is
 applied to **both** cells (fair).

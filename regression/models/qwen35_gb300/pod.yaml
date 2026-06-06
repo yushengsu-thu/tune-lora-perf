@@ -58,7 +58,9 @@ spec:
       if [ -d /root/sglang/.git ]; then
         log "updating /root/sglang -> origin/main"; cd /root/sglang
         git remote set-url origin https://github.com/sgl-project/sglang.git 2>/dev/null || true
-        git fetch origin main && git reset --hard origin/main
+        # Pinned baseline: the PR #27329 merge commit on sgl-project main (deterministic setup;
+        # the driver checks out the injected __bench_* refs per cell anyway).
+        git fetch origin c9f582a272dcc7109bf7da584867f47995602035 && git reset --hard c9f582a272dcc7109bf7da584867f47995602035
       else
         log "cloning sglang"; rm -rf /root/sglang && git clone https://github.com/sgl-project/sglang /root/sglang; cd /root/sglang
       fi
