@@ -76,10 +76,10 @@ each = 6 launches total) — that's the price of standalone, individually-rerunn
 
 | | |
 |---|---|
-| input | state; `${LORA_PATH}/compare_sample_train_data.pt` (fixed token sequences shipped inside the adapter repo; override: `ACC_DATA=…`) |
-| does | per cell: launch graph-ON server → teacher-forced **prefill-only** logprob capture (`/generate` with `max_new_tokens=0` + `return_logprob`) → coherence probe → kill; then diff the two cells' per-token logprobs locally |
-| output | `results/<model>/<DATE>-<TIME>/acc/{no-lora,lora}/logprobs.json` + `acc/summary.md` — n, mean/max abs diff, p50/p95, half-MSE, verdict vs `ACC_TOL` (qwen 0.05 placeholder; kimi 0.30 measured noise floor) |
-| verify | both logprob sets captured + equal length + per-cell coherence. `max > ACC_TOL` is a **warning** by default (alpha is a near-identity adapter so the diff ≈ LoRA-path numerical noise; a custom adapter legitimately diverges) — `ACC_STRICT=1` makes it fail |
+| input | state; `${LORA_PATH}/compare_sample_train_data.pt` (token sequences **+ the vLLM/trainer reference logprobs**, shipped inside the adapter repo). Overrides: `ACC_DATA=<in-pod path>`, or `ACC_HF_FILE=<file>` (+`ACC_HF_REPO`, default `yushengsu/datasets`) to download a reference `.pt` from the private HF dataset (pod `HF_TOKEN` authenticates) |
+| does | per cell: launch graph-ON server → teacher-forced **prefill-only** logprob capture (`/generate` with `max_new_tokens=0` + `return_logprob`) → coherence probe → kill; then locally: **(a)** lora-vs-no-lora per-token diff, **(b)** KL (=½·mean((a−b)²), `lora-dev-script`'s `kl_v2`) of sglang-lora against the `.pt`'s `training_logprobs` (trainer) and `sampling_logprobs` (original **vLLM** sampler), next to the inherent KL(vLLM, trainer) noise floor |
+| output | `results/<model>/<DATE>-<TIME>/acc/{no-lora,lora}/logprobs.json` + `acc/summary.md` — lora-vs-no-lora table (n, mean/max abs, p50/p95, half-MSE, verdict vs `ACC_TOL`) + 3-row KL table: KL(vLLM,trainer) / KL(sglang,trainer) / KL(sglang,vLLM) — sglang matches the vLLM-era accuracy when KL(sglang,trainer) ≈ the floor |
+| verify | both logprob sets captured + equal length + per-cell coherence. `max > ACC_TOL` is a **warning** by default (`ACC_STRICT=1` makes it fail); the KL-vs-reference rows are informational |
 
 > acc is prefill-only — it **cannot** see decode-accumulating garbage (proven: a corrupted-decode
 > server scored clean acc while generating `!!!!`). The per-cell coherence probe is the decode gate.
