@@ -4,14 +4,15 @@
 #      exceeded 30 min on the 2026-06-06 regression validation (warm cache relaunch ~8 min).
 #   2. SGLANG_OPT_LORA_DOWN_FINALIZE_OVERLAP DROPPED from the PR opt set — the runbook/MODEL.md
 #      guardrail says NEVER set it (corrupts base / decode garbage); the GB200 script still had it.
-#   3. PR backend name parameterized (PRBACKEND): `sgl_flashinfer_trtllm` on jybsuper:full-lora-opti,
-#      `experimental_sgl_trtllm` after the PR #27329 merge naming — confirm against the ref under test.
+#   3. PR backend name parameterized (PRBACKEND). Default `experimental_sgl_trtllm` — VERIFIED on
+#      full-lora-opti@ac51ef5ed (2026-06-06 GB300 run: the old `sgl_flashinfer_trtllm` name is GONE
+#      from --moe-runner-backend choices; the rebased branch uses the post-PR-#27329-merge naming).
 #   4. flashinfer pin guard: re-pins flashinfer to $FLASHINFER_PIN after checkout (the branch
 #      pyproject's 0.6.12 breaks the sm_103 JIT vs the pinned image's 0.6.11 jit-cache).
 #      REINSTALL=1 additionally re-runs `pip install -e python` after checkout.
 # Usage: qwen_run_gb300.sh <REF=full-lora-opti|main> <TAG>
 REF=$1; TAG=$2; PORT=30000; MODEL=/data/Qwen3.5-35B-A3B-FP8; LORAP=/data/qwen35_35b_lora_alpha; H=/tmp/flo_helpers; cd /root/sglang
-PRBACKEND=${PRBACKEND:-sgl_flashinfer_trtllm}
+PRBACKEND=${PRBACKEND:-experimental_sgl_trtllm}
 FLASHINFER_PIN=${FLASHINFER_PIN:-0.6.11.post1}
 if [ "$REF" = main ]; then URL=https://github.com/sgl-project/sglang; BR=main; else URL=https://github.com/jybsuper/sglang; BR=full-lora-opti; fi
 pkill -9 -f "[s]glang.launch_server" 2>/dev/null; pkill -9 -f "[p]ython3 -m sglang" 2>/dev/null; fuser -k $PORT/tcp 2>/dev/null; sleep 5

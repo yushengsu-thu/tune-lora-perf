@@ -4,7 +4,7 @@
 # PR backend parameterized (PRBACKEND), flashinfer pin guard (see qwen_run_gb300.sh header).
 # Usage: qwen_tp1_gb300.sh <REF=full-lora-opti|main-base> <TAG>   (GPU0, tp1)
 REF=$1; TAG=$2; PORT=30001; MODEL=/data/Qwen3.5-35B-A3B-FP8; LORAP=/data/qwen35_35b_lora_alpha; H=/tmp/flo_helpers; cd /root/sglang
-PRBACKEND=${PRBACKEND:-sgl_flashinfer_trtllm}
+PRBACKEND=${PRBACKEND:-experimental_sgl_trtllm}
 FLASHINFER_PIN=${FLASHINFER_PIN:-0.6.11.post1}
 pkill -9 -f "[s]glang.launch_server" 2>/dev/null; fuser -k $PORT/tcp 30000/tcp 2>/dev/null; sleep 5; : >/tmp/srv_tp1.log
 # NEVER add SGLANG_OPT_LORA_DOWN_FINALIZE_OVERLAP or SGLANG_OPT_LORA_ENABLE_PDL (corrupts base).

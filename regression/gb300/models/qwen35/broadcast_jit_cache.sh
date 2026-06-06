@@ -6,8 +6,11 @@
 # it pays the >30-min cold sm_103 compile. After one node has built it, run this to copy the
 # cache to every other GB300 GPU node — any future pod then lands warm.
 #
-# HOW: per node, a tiny busybox "sync pod" pinned with spec.nodeName (bypasses the scheduler,
-# so the cohort/gpu NoSchedule taints don't block it; needs NO GPU). The tarball moves via
+# HOW: per node, a "sync pod" pinned with spec.nodeName (bypasses the scheduler, so the
+# cohort/gpu NoSchedule taints don't block it; needs NO GPU). The pod runs the pinned sglang
+# image (already cached on every GPU node) — NOT busybox: kubectl exec STDIN STREAMING to
+# busybox pods consistently dies with `broken pipe` on this GKE API server (verified
+# 2026-06-06), while the same push to an sglang-image pod works. The tarball moves via
 # 20MB size-verified chunks (plain kubectl streams TRUNCATE multi-GB transfers) through the
 # local machine. Nodes tainted gpu-maintenance are SKIPPED (drained for a reason).
 #
@@ -53,8 +56,10 @@ spec:
   restartPolicy: Never
   containers:
   - name: sync
-    image: busybox
-    command: ["sh", "-c", "sleep 7200"]
+    # pinned sglang image: cached on all GPU nodes + its exec stdin streaming WORKS (busybox's doesn't)
+    image: lmsysorg/sglang@sha256:97e7cd699dc879b56bc9f7a11f25c060fa4a6137e901a637f4378e9b01607a01
+    imagePullPolicy: IfNotPresent
+    command: ["bash", "-c", "sleep 7200"]
     volumeMounts:
     - { name: sp, mountPath: /sp }
   volumes:
@@ -68,34 +73,34 @@ YAML
 push_chunks(){  # $1=pod $2=remote-out-path : reassembles $WORK/cache.tgz on the pod, verified
   local pod=$1 out=$2 part want got ok n=0 total
   total=$(ls "$WORK"/part_* | wc -l | tr -d ' ')
-  kubectl exec "$pod" -- sh -c ": > $out" || return 1
+  kubectl exec "$pod" -- bash -c ": > $out" || return 1
   for part in "$WORK"/part_*; do
     want=$(stat -f%z "$part" 2>/dev/null || stat -c%s "$part")
     ok=0
     for _ in 1 2 3 4 5; do
-      kubectl exec -i "$pod" -- sh -c 'cat > /tmp/.chunk' < "$part" 2>/dev/null
-      got=$(kubectl exec "$pod" -- sh -c 'wc -c < /tmp/.chunk' 2>/dev/null | tr -d '[:space:]')
+      kubectl exec -i "$pod" -- bash -c 'cat > /tmp/.chunk' < "$part" 2>/dev/null
+      got=$(kubectl exec "$pod" -- bash -c 'wc -c < /tmp/.chunk' 2>/dev/null | tr -d '[:space:]')
       [ "$want" = "${got:-0}" ] && { ok=1; break; }
     done
     [ "$ok" = 1 ] || { echo "    chunk $(basename "$part") FAILED after 5 tries"; return 1; }
-    kubectl exec "$pod" -- sh -c "cat /tmp/.chunk >> $out" || return 1
+    kubectl exec "$pod" -- bash -c "cat /tmp/.chunk >> $out" || return 1
     n=$((n+1)); [ $((n % 25)) = 0 ] && echo "    $n/$total chunks"
   done
-  kubectl exec "$pod" -- sh -c 'rm -f /tmp/.chunk'
+  kubectl exec "$pod" -- bash -c 'rm -f /tmp/.chunk'
 }
 
 # ---- 1. pack + pull the cache from the source node ----
 echo "== packing ${SP}/${CACHE_DIR} on ${SRC}"
 SPOD=$(sync_pod "$SRC") || { echo "ERROR: sync pod on source failed"; exit 1; }
-kubectl exec "$SPOD" -- sh -c "[ -d /sp/${CACHE_DIR} ] || { echo 'NO CACHE DIR on source'; exit 1; }" || exit 1
-kubectl exec "$SPOD" -- sh -c "cd /sp && tar -czf /tmp/cache.tgz ${CACHE_DIR} && rm -rf /tmp/.bsplit && mkdir /tmp/.bsplit && cd /tmp/.bsplit && split -b 20m ../cache.tgz part_ && wc -c < ../cache.tgz" | tail -1 > "$WORK/.srcsize"
+kubectl exec "$SPOD" -- bash -c "[ -d /sp/${CACHE_DIR} ] || { echo 'NO CACHE DIR on source'; exit 1; }" || exit 1
+kubectl exec "$SPOD" -- bash -c "cd /sp && tar -czf /tmp/cache.tgz ${CACHE_DIR} && rm -rf /tmp/.bsplit && mkdir /tmp/.bsplit && cd /tmp/.bsplit && split -b 20m ../cache.tgz part_ && wc -c < ../cache.tgz" | tail -1 > "$WORK/.srcsize"
 SRCSIZE=$(tr -d '[:space:]' < "$WORK/.srcsize")
 echo "   tarball: ${SRCSIZE} bytes"
-for part in $(kubectl exec "$SPOD" -- sh -c 'ls /tmp/.bsplit'); do
+for part in $(kubectl exec "$SPOD" -- bash -c 'ls /tmp/.bsplit'); do
   ok=0
   for _ in 1 2 3 4 5; do
-    kubectl exec "$SPOD" -- sh -c "cat /tmp/.bsplit/$part" > "$WORK/$part" 2>/dev/null
-    want=$(kubectl exec "$SPOD" -- sh -c "wc -c < /tmp/.bsplit/$part" | tr -d '[:space:]')
+    kubectl exec "$SPOD" -- bash -c "cat /tmp/.bsplit/$part" > "$WORK/$part" 2>/dev/null
+    want=$(kubectl exec "$SPOD" -- bash -c "wc -c < /tmp/.bsplit/$part" | tr -d '[:space:]')
     got=$(stat -f%z "$WORK/$part" 2>/dev/null || stat -c%s "$WORK/$part")
     [ "$want" = "$got" ] && { ok=1; break; }
   done
@@ -105,7 +110,7 @@ cat "$WORK"/part_* > "$WORK/cache.tgz"
 LOCSIZE=$(stat -f%z "$WORK/cache.tgz" 2>/dev/null || stat -c%s "$WORK/cache.tgz")
 [ "$LOCSIZE" = "$SRCSIZE" ] || { echo "ERROR: local tarball size mismatch ($LOCSIZE vs $SRCSIZE)"; exit 1; }
 gzip -t "$WORK/cache.tgz" || { echo "ERROR: local tarball corrupt"; exit 1; }
-kubectl exec "$SPOD" -- sh -c 'rm -rf /tmp/cache.tgz /tmp/.bsplit'
+kubectl exec "$SPOD" -- bash -c 'rm -rf /tmp/cache.tgz /tmp/.bsplit'
 kubectl delete pod "$SPOD" --wait=false >/dev/null
 echo "   pulled + verified locally"
 
@@ -115,7 +120,7 @@ for NODE in $TARGETS; do
   echo "== ${NODE}"
   TPOD=$(sync_pod "$NODE") || { echo "   sync pod FAILED — skipping"; FAILED="$FAILED $NODE"; continue; }
   if push_chunks "$TPOD" /tmp/cache.tgz && \
-     kubectl exec "$TPOD" -- sh -c "gzip -t /tmp/cache.tgz && mkdir -p /sp/${CACHE_DIR} && tar -xzf /tmp/cache.tgz -C /sp && rm -f /tmp/cache.tgz && du -sh /sp/${CACHE_DIR} 2>/dev/null | head -1"; then
+     kubectl exec "$TPOD" -- bash -c "gzip -t /tmp/cache.tgz && mkdir -p /sp/${CACHE_DIR} && tar -xzf /tmp/cache.tgz -C /sp && rm -f /tmp/cache.tgz && du -sh /sp/${CACHE_DIR} 2>/dev/null | head -1"; then
     echo "   OK"
   else
     echo "   FAILED"; FAILED="$FAILED $NODE"

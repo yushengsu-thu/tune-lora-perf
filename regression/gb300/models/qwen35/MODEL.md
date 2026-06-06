@@ -12,7 +12,7 @@ This file only records the GB300 deltas.
 
 ## Deltas vs the GB200/leira pack
 
-| | `qwen35` (GB200, leira) | `qwen35_gb300` (GB300, gcp-radixark-02) |
+| | `gb200/models/qwen35` (leira) | `gb300/models/qwen35` (gcp-radixark-02) |
 |---|---|---|
 | pod.yaml | `runtimeClassName: nvidia-legacy`, privileged, hostPath on `/mnt/nvme-b` (big dedicated raid) | no runtimeClass, no privileged, hostPath on **`/mnt/stateful_partition`** (the node's 95G persistent NVMe partition): `/root/.cache` (JIT — kills the >30-min cold sm_103 build on relaunches) + `/data` (weights — no re-download/relay per pod). Wiped only on node re-image. **Disk budget is tight:** model 40G + adapter 2.4G + JIT cache on a 95G partition — don't park other large artifacts there. |
 | MODEL_PATH / LORA_PATH | `/data/...` | `/data/...` (same paths now) |
@@ -47,7 +47,7 @@ This file only records the GB300 deltas.
   regardless of which node it schedules on:
   ```bash
   KUBECONFIG=<gcp-radixark-02 kubeconfig> \
-    bash models/qwen35_gb300/broadcast_jit_cache.sh <node-that-just-built-it>   # e.g. tg41
+    bash gb300/models/qwen35/broadcast_jit_cache.sh <node-that-just-built-it>   # e.g. tg41
   # DRY=1 to preview the node list; TARGETS="<nodes>" to retry a subset.
   ```
   Run it after any regression run that JIT-compiled a new commit/flashinfer combo. Mechanics:

@@ -29,16 +29,25 @@
 set -uo pipefail   # NOT -e: failures are handled explicitly (launch retry); -e would abort on a transient.
 
 # ===== model selection =====
-MODEL_NAME="${1:?usage: run_regression.sh <model>  (a dir under <platform>/models/, e.g. gb200/models/kimi)}"
+MODEL_REF="${1:?usage: run_regression.sh <platform>/models/<model> | <model-name>}"
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL_SCRIPTS="${SKILL_SCRIPTS:-${SKILL_DIR}/scripts}"
-# Model packs live under per-platform dirs (gb200/models/, gb300/models/, ...). Resolve the
-# pack by name across platforms; legacy flat models/ is checked first for compatibility.
+# Model packs live under per-platform dirs (gb200/models/, gb300/models/, ...). The SAME pack
+# name exists on multiple platforms (e.g. kimi, qwen35) — wrappers pass the platform-scoped
+# path ("gb300/models/kimi"); a bare name is resolved by search and ERRORS if ambiguous.
 MODEL_DIR=""
-for d in "${SKILL_DIR}/models/${MODEL_NAME}" "${SKILL_DIR}"/*/models/"${MODEL_NAME}"; do
-  [ -d "$d" ] && { MODEL_DIR="$d"; break; }
-done
-[ -n "$MODEL_DIR" ] || { echo "ERROR: model pack '${MODEL_NAME}' not found under ${SKILL_DIR}/*/models/" >&2; exit 1; }
+if [[ "$MODEL_REF" == */* ]]; then
+  [ -d "${SKILL_DIR}/${MODEL_REF}" ] && MODEL_DIR="${SKILL_DIR}/${MODEL_REF}"
+else
+  matches=()
+  for d in "${SKILL_DIR}/models/${MODEL_REF}" "${SKILL_DIR}"/*/models/"${MODEL_REF}"; do
+    [ -d "$d" ] && matches+=("$d")
+  done
+  [ "${#matches[@]}" -gt 1 ] && { echo "ERROR: '${MODEL_REF}' is ambiguous (${matches[*]}) — pass <platform>/models/${MODEL_REF}" >&2; exit 1; }
+  [ "${#matches[@]}" = 1 ] && MODEL_DIR="${matches[0]}"
+fi
+[ -n "$MODEL_DIR" ] || { echo "ERROR: model pack '${MODEL_REF}' not found under ${SKILL_DIR}/*/models/" >&2; exit 1; }
+MODEL_NAME="$(basename "$MODEL_DIR")"
 MODEL_ENV="${MODEL_ENV:-${MODEL_DIR}/model.env}"   # point MODEL_ENV at an edited copy for one-off cells
 [ -f "$MODEL_ENV" ] || { echo "ERROR: no model.env at ${MODEL_ENV}" >&2; exit 1; }
 # shellcheck disable=SC1090

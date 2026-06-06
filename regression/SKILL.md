@@ -8,7 +8,7 @@ description: >-
   Model-agnostic driver (scripts/run_regression.sh) + per-platform model packs
   (<platform>/models/<m>/{model.env,pod.yaml,hooks.sh,MODEL.md}). Supported today:
   gb200/kimi (Kimi-K2.5-NVFP4, 2-node MNNVL), gb200/qwen35 (Qwen3.5-35B-A3B-FP8, 1 node
-  tp4/ep4, leira) and gb300/qwen35_gb300 (same model on GB300/sm_103, gcp-radixark-02).
+  tp4/ep4, leira) and gb300/models/qwen35 (same model on GB300/sm_103, gcp-radixark-02).
   Use when the user asks to acc-and-bench-and-profile a serving change — a LoRA toggle, a
   MoE/kernel backend swap, an env-var toggle, or a PR — on one of these models. Read
   <platform>/models/<m>/MODEL.md BEFORE editing cells: it holds the model's env-var matrix,
@@ -25,7 +25,7 @@ a per-endpoint prompt-check table, and kernel-structure profiler traces.
 > - **GB200** (`leira`, qwen35): driver exit 0, 10/10 traces gzip-OK, variant decode coherent,
 >   fast-path = **78.6/81.3/81.8%** of the no-LoRA ceiling (PR #27329 claims 79/84/82%), all
 >   6 sanity checks ≤2.1%.
-> - **GB300** (`gcp-radixark-02`, qwen35_gb300, sm_103 — first ever): driver exit 0, 10/10
+> - **GB300** (`gcp-radixark-02`, gb300/qwen35, sm_103 — first ever): driver exit 0, 10/10
 >   traces, variant coherent, fast-path = **77.6/80.0/81.3%** of ceiling (3570/6206/10836
 >   tok/s base), sanity ≤3%. The launch-retry mechanism proved itself live: attempt 1 hit the
 >   cold sm_103 JIT timeout, attempt 2 came up READY in ~8 min on the warm cache.
@@ -55,7 +55,7 @@ regression/
 │   ├── build_readme.py       # per-run README for publishing
 │   └── publish.sh            # small files -> git commit; traces -> GitHub Release (append-only)
 ├── gb200/                    # GB200 platform (leira): run_kimi.sh, run_qwen35.sh + models/
-└── gb300/                    # GB300 platform (gcp-radixark-02): run_qwen35_gb300.sh + models/
+└── gb300/                    # GB300 platform (gcp-radixark-02): gb300/run_qwen35.sh + models/
     └── models/<m>/           # per-model parameter pack (the ONLY place model specifics live)
         ├── model.env         # VALUES: topology, paths, flags, profile recipe, tolerances
         ├── pod.yaml          # K8s env (apply with the ${ID} sed below)
@@ -178,7 +178,7 @@ kubectl exec <pod> -- python3 /tmp/prompts_check.py --lora alpha --model <model-
 ```bash
 kubectl config use-context leira
 export ID=<dns-safe-id>                       # ASK the user if not given
-PLAT=gb200; MODEL=kimi                        # or gb200/qwen35, gb300/qwen35_gb300
+PLAT=gb200; MODEL=kimi                        # or gb200/qwen35, gb300/models/qwen35
 export RUN_ROOT="$HOME/Downloads/sglang_${MODEL}_reg_${ID}_$(date +%Y%m%d_%H%M%S)"; mkdir -p "$RUN_ROOT"
 REG=<path-to>/regression                      # repo checkout or ~/.claude/skills/regression
 ```
