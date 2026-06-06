@@ -34,6 +34,8 @@ for n in d['items']:
     l=n['metadata']['labels']
     if l.get('cloud.google.com/gke-accelerator','')!='nvidia-gb300': continue
     if any(t.get('key')=='gpu-maintenance' for t in n['spec'].get('taints',[])): continue
+    # skip disk-pressured nodes — kubelet rejects new pods there (seen: tmsq, DiskPressure)
+    if any(c['type']=='DiskPressure' and c['status']=='True' for c in n['status'].get('conditions',[])): continue
     print(n['metadata']['name'])")
 SRC=$(echo "$ALL" | grep -- "$SRC_IN" | head -1)
 [ -n "$SRC" ] || { echo "ERROR: source node '$SRC_IN' not found among GB300 nodes"; exit 1; }
