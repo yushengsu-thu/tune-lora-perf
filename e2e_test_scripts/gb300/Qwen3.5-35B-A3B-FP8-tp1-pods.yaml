@@ -1,5 +1,5 @@
-# GB300 port of ../flo-qwentp1-pods.yaml (single-GPU tp1 pr/oss pods) for qwen_tp1_gb300.sh.
-# Cluster conventions (gcp-radixark-02 / GKE / nvidia-gb300) — see qwen-pod.yaml header:
+# GB300 port of ../flo-Qwen3.5-35B-A3B-FP8-tp1-pods.yaml (single-GPU tp1 pr/oss pods) for Qwen3.5-35B-A3B-FP8_tp1_gb300.sh.
+# Cluster conventions (gcp-radixark-02 / GKE / nvidia-gb300) — see Qwen3.5-35B-A3B-FP8-pod.yaml header:
 # no runtimeClassName, cohort toleration, /mnt/stateful_partition hostPaths (shares the
 # /data weights + JIT cache with the TP4 pod when scheduled on the same node), pinned image
 # digest + flashinfer 0.6.11.post1 re-pin.

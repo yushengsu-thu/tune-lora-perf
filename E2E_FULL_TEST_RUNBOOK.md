@@ -45,7 +45,7 @@ total via the MNNVL `imex-channel` resourceClaim + the `*-head` subdomain for
 ### 1.2 Pod YAML (key fields)
 
 Local copies: `~/Desktop/lora_bench_run/kimi-2node.yaml`, `~/Desktop/lora_bench_run/qwen35-pod.yaml`,
-`/tmp/rf_regression/kimi-rf.yaml`, `/tmp/rf_regression/flo-qwentp1-pods.yaml`.
+`/tmp/rf_regression/kimi-rf.yaml`, `/tmp/rf_regression/flo-Qwen3.5-35B-A3B-FP8-tp1-pods.yaml`.
 
 ```yaml
 apiVersion: v1
@@ -152,7 +152,7 @@ readiness is polled on `/tmp/srv.log` + `curl /v1/models` — never trust the
 fire-and-forget exit code. `cfuse-1` SIGKILLs an `exec` ~2s into compute, so fire with
 `setsid … & exit 0` and read `/tmp/srv.log` afterward.
 
-### 2.1 Qwen3.5-FP8 — TP4 / EP4, single node (`qwen_run.sh`)
+### 2.1 Qwen3.5-FP8 — TP4 / EP4, single node (`Qwen3.5-35B-A3B-FP8_run.sh`)
 
 Three configs run back-to-back on the PR pod; two on the oss pod:
 
@@ -192,7 +192,7 @@ numactl --membind=0,1 python3 -m sglang.launch_server \
 `triton-lora` control = same minus the OPT env + `--moe-runner-backend triton`.
 `nolora` = same OPT env + `--moe-runner-backend sgl_flashinfer_trtllm`, drop the `--enable-lora …`.
 
-### 2.2 oss no-LoRA ceiling (the %-denominator) — `qwen_base.sh`
+### 2.2 oss no-LoRA ceiling (the %-denominator) — `Qwen3.5-35B-A3B-FP8_base.sh`
 
 Same launch **minus the LoRA flags and WITHOUT `--moe-runner-backend`** (stock default):
 
@@ -238,7 +238,7 @@ bash kimi_run.sh worker full-lora-opti 1 sgl_flashinfer_trtllm <DISTADDR> KIMI-P
 bash kimi_run.sh head   full-lora-opti 1 sgl_flashinfer_trtllm <DISTADDR> KIMI-PR full
 ```
 
-### 2.4 Qwen tp=ep=1 (single GPU) — `qwen_tp1_v2.sh`
+### 2.4 Qwen tp=ep=1 (single GPU) — `Qwen3.5-35B-A3B-FP8_tp1_v2.sh`
 
 `CUDA_VISIBLE_DEVICES=0 … --tp 1` (drop `--ep`, allreduce-fusion). Same OPT env (minus
 down_finalize). Run REF=`full-lora-opti` (PR sgl-lora) on one pod, REF=`main-base`
@@ -375,5 +375,5 @@ behavior**. Garbage/empty decode = a real bug (kernel/quant), not the adapter.
   server-decode median, and the `OK/SUSPECT` xcheck.
 - **`prompts_check.py`** — coherence prompts + per-endpoint adapter-behavior check.
 
-Run-orchestration scripts live in `/tmp/rf_regression/`: `qwen_run.sh`, `qwen_base.sh`,
-`qwen_tp1_v2.sh`, `kimi_run.sh`, plus `reformat_sanity.sh` (import + gating sanity).
+Run-orchestration scripts live in `/tmp/rf_regression/`: `Qwen3.5-35B-A3B-FP8_run.sh`, `Qwen3.5-35B-A3B-FP8_base.sh`,
+`Qwen3.5-35B-A3B-FP8_tp1_v2.sh`, `kimi_run.sh`, plus `reformat_sanity.sh` (import + gating sanity).

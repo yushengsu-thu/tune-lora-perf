@@ -23,7 +23,7 @@ FLASHINFER_PIN="${FLASHINFER_PIN:-0.6.11.post1}"  # must match the pinned image 
 # ---------- per-model config (values from the validated regression packs) ----------
 case "$MODEL" in
   qwen)
-    PACK="${ROOT_DIR}/regression/gb300/models/qwen35"
+    PACK="${ROOT_DIR}/regression/gb300/models/Qwen3.5-35B-A3B-FP8"
     NNODES=1; TP=4; EP=4; GPUS_PER_NODE=4
     POD_PREFIX="sglang-gb300-qwen3vl-yushengsu"
     MODEL_PATH=/data/Qwen3.5-35B-A3B-FP8

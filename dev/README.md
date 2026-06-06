@@ -30,7 +30,7 @@ dev/
 - Local sglang checkout at `/Users/yushengsu/Downloads/tml/sglang` (override: `SGLANG_SRC=…`);
   the **current branch's committed HEAD** is what gets uploaded.
 - The `hf-token-yanbin` secret exists on the cluster (private LoRA adapters — see
-  `../regression/gb300/models/qwen35/MODEL.md`).
+  `../regression/gb300/models/Qwen3.5-35B-A3B-FP8/MODEL.md`).
 
 ## Run everything
 
@@ -112,7 +112,7 @@ Runs 1→2→3→4→5→6; each step's own verification gates the next; first f
   (e.g. iterate `2 → 3` on the same pods after a code change). Step 1 resets the state.
 - **Cleanup** when done:
   `ID=<id> sh -c 'sed "s/\${ID}/$ID/g" ../regression/gb300/models/<pack>/pod.yaml | kubectl --context gcp-radixark-02 delete -f - --ignore-not-found'`
-  (pack = `qwen35` | `kimi`; `<id>` is in `dev/.state/<model>.env`).
+  (pack = `Qwen3.5-35B-A3B-FP8` | `kimi`; `<id>` is in `dev/.state/<model>.env`).
 - Decode throughput is the headline number; `bs<bs>.serverlog` keeps the scheduler's own
   `gen throughput` lines as ground truth if a bench number looks suspicious (>5% mismatch ⇒
   rerun — see `../regression/SKILL.md` item 4).

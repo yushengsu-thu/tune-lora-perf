@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tp1 re-run on the FIXED branch + a tp1 oss-nolora baseline (% denominator).
-# Usage: qwen_tp1_v2.sh <REF=full-lora-opti|main-base> <TAG>   (GPU0, tp1)
+# Usage: Qwen3.5-35B-A3B-FP8_tp1_v2.sh <REF=full-lora-opti|main-base> <TAG>   (GPU0, tp1)
 REF=$1; TAG=$2; PORT=30001; MODEL=/data/Qwen3.5-35B-A3B-FP8; LORAP=/data/qwen35_35b_lora_alpha; H=/tmp/flo_helpers; cd /root/sglang
 pkill -9 -f "[s]glang.launch_server" 2>/dev/null; fuser -k $PORT/tcp 30000/tcp 2>/dev/null; sleep 5; : >/tmp/srv_tp1.log
 if [ "$REF" = main-base ]; then URL=https://github.com/yushengsu-thu/sglang; BR=trtllm-lora-bf16; BFLAG=""; LF=""; OPT=""; LMODE=0

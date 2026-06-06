@@ -15,8 +15,8 @@ cells run this exact commit (base = no-LoRA stock backend, variant = the fast pa
 3. **Regression (acc + bench + prompts + profile, base vs variant)** — [`regression/`](regression):
    one generic driver + per-platform model packs (formerly `kimi-regression/` + `qwen35_35b-regression/`).
    Entry points: [`gb200/run_kimi.sh`](regression/gb200/run_kimi.sh) (Kimi-K2.5-NVFP4, 2-node MNNVL, tp8/ep8),
-   [`gb200/run_qwen35.sh`](regression/gb200/run_qwen35.sh) (Qwen3.5-35B-A3B-FP8, 1 GB200 node, tp4/ep4), and
-   [`gb300/run_qwen35.sh`](regression/gb300/run_qwen35.sh) (same model on a GB300/sm_103 node).
+   [`gb200/run_Qwen3.5-35B-A3B-FP8.sh`](regression/gb200/run_Qwen3.5-35B-A3B-FP8.sh) (Qwen3.5-35B-A3B-FP8, 1 GB200 node, tp4/ep4), and
+   [`gb300/run_Qwen3.5-35B-A3B-FP8.sh`](regression/gb300/run_Qwen3.5-35B-A3B-FP8.sh) (same model on a GB300/sm_103 node).
    Adding a model = a new `<platform>/models/<m>/` pack + a `run_<m>.sh` wrapper — zero edits to `scripts/`.
    **Validated end-to-end on both GB200 and GB300 (2026-06-06)** — see the validation-status note in
    [`regression/SKILL.md`](regression/SKILL.md).
@@ -36,17 +36,17 @@ cells run this exact commit (base = no-LoRA stock backend, variant = the fast pa
    │
    ├── gb200/                             # ── GB200 platform (leira cluster) ──
    │   ├── run_kimi.sh                    # entry point: Kimi regression (2-node MNNVL)
-   │   ├── run_qwen35.sh                  # entry point: Qwen3.5 regression (1 node)
+   │   ├── run_Qwen3.5-35B-A3B-FP8.sh                  # entry point: Qwen3.5 regression (1 node)
    │   └── models/
    │       ├── kimi/                      # model.env + pod.yaml + hooks.sh + MODEL.md
-   │       └── qwen35/                    # (single pod + /mnt/nvme-b hostPath)
+   │       └── Qwen3.5-35B-A3B-FP8/                    # (single pod + /mnt/nvme-b hostPath)
    │
    └── gb300/                             # ── GB300 platform (gcp-radixark-02 cluster, sm_103) ──
        ├── run_kimi.sh                    # entry point: Kimi regression (2-node MNNVL via DRA)
-       ├── run_qwen35.sh                  # entry point: Qwen3.5 regression (1 node)
+       ├── run_Qwen3.5-35B-A3B-FP8.sh                  # entry point: Qwen3.5 regression (1 node)
        └── models/
            ├── kimi/                      # 2-node GKE pods (ComputeDomain; weights on 2.9T eph SSD)
-           └── qwen35/                    # GKE-adapted pod (stateful-partition mounts, cohort
+           └── Qwen3.5-35B-A3B-FP8/                    # GKE-adapted pod (stateful-partition mounts, cohort
                │                          #   toleration, 45-min cold-JIT timeout)
                └── broadcast_jit_cache.sh # fan a built JIT cache out to all GB300 nodes
    ```
@@ -56,14 +56,14 @@ cells run this exact commit (base = no-LoRA stock backend, variant = the fast pa
 
    ### Manual run — the exact commands, step by step
 
-   Replace `PLAT/MODEL` with `gb200/kimi`, `gb200/qwen35`, `gb300/kimi`, or `gb300/qwen35`. Full details per step:
+   Replace `PLAT/MODEL` with `gb200/kimi`, `gb200/Qwen3.5-35B-A3B-FP8`, `gb300/kimi`, or `gb300/Qwen3.5-35B-A3B-FP8`. Full details per step:
    `regression/SKILL.md` §0–§6; model-specific envs/numbers: `regression/<PLAT>/models/<MODEL>/MODEL.md`.
 
    ```bash
    ## 0. prep (once per run)
    kubectl config use-context leira              # gb300 packs: gcp-radixark-02
    export ID=<your-dns-safe-id>                  # e.g. yb — namespaces the pods so parallel runs don't collide
-   PLAT=gb200; MODEL=qwen35                      # or gb200/kimi, gb300/qwen35, gb300/kimi
+   PLAT=gb200; MODEL=Qwen3.5-35B-A3B-FP8                      # or gb200/kimi, gb300/Qwen3.5-35B-A3B-FP8, gb300/kimi
    export RUN_ROOT="$HOME/Downloads/sglang_${MODEL}_reg_${ID}_$(date +%Y%m%d_%H%M%S)"; mkdir -p "$RUN_ROOT/$MODEL"
    REG=<path-to-this-repo>/regression
 
@@ -76,7 +76,7 @@ cells run this exact commit (base = no-LoRA stock backend, variant = the fast pa
    ## 2. wait for in-pod setup (sglang clone + pip install + weight downloads)
    kubectl exec <pod> -- bash -lc 'for i in $(seq 1 480); do [ -f /root/.setup-done ] && { echo DONE; exit 0; }; sleep 10; done; echo TIMEOUT; tail -40 /root/setup.log; exit 1'
    # (kimi: run this for BOTH pods. gb300: the private-LoRA download fails without the HF secret —
-   #  copy the adapter from a leira pod instead; see gb300/models/qwen35/MODEL.md.)
+   #  copy the adapter from a leira pod instead; see gb300/models/Qwen3.5-35B-A3B-FP8/MODEL.md.)
 
    ## 3. inject the base + variant commits (git bundles — exact commits, no stale-branch risk)
    REPO=<local sglang checkout>
@@ -118,4 +118,4 @@ cells run this exact commit (base = no-LoRA stock backend, variant = the fast pa
 5. **Launch script**: [`run_script.sh`](run_script.sh) — Yanbin's launch command (Qwen3.5-35B-A3B-FP8 LoRA server + graph-ON bs64 24-step profile); have the agent use the kimi skill together with this command.
 6. **E2E full test (experimental TRT-LLM LoRA fast path)**:
    - [`E2E_FULL_TEST_RUNBOOK.md`](E2E_FULL_TEST_RUNBOOK.md) — runbook for the full end-to-end test matrix of the `SGLANG_EXPERIMENTAL_LORA_OPTI` fast path (`jybsuper:full-lora-opti` vs `sgl-project:main`) on GB200: infra/pod YAML, launch commands for Qwen3.5-35B-A3B-FP8 (TP4/EP4 single node + tp1) and Kimi-K2.5-NVFP4 (TP8/EP8, 2-node MNNVL), the test matrix (coherence + bench bs16–128 with server-log throughput xcheck + gsm8k base/LoRA), expected numbers (% of the oss no-LoRA ceiling), pitfalls, and the bugs found+fixed (e.g. the `down_finalize` base-corruption).
-   - [`e2e_test_scripts/`](e2e_test_scripts) — the companion scripts, organized per cluster arch: the **root** holds the shared, hardware-agnostic files (pod helpers `gsm8k_lora.py`/`bench_report.py`/`prompts_check.py` + import/gating sanity checks `reformat_sanity.sh`/`qwen_reformat_chk.sh`/`qwen_sglnolora.sh`/`fmla_import_chk.sh`/`jit_chk_temp.sh`); [`gb200/`](e2e_test_scripts/gb200) has the original leira runners + pod YAMLs (**historical** — the GB200 cluster is gone); [`gb300/`](e2e_test_scripts/gb300) has the **active** gcp-radixark-02 port (validated 2026-06-06, results + the kimi NVFP4+LoRA bug report in `gb300/results/`). See each [README](e2e_test_scripts/README.md) for per-file usage.
+   - [`e2e_test_scripts/`](e2e_test_scripts) — the companion scripts, organized per cluster arch: the **root** holds the shared, hardware-agnostic files (pod helpers `gsm8k_lora.py`/`bench_report.py`/`prompts_check.py` + import/gating sanity checks `reformat_sanity.sh`/`Qwen3.5-35B-A3B-FP8_reformat_chk.sh`/`Qwen3.5-35B-A3B-FP8_sglnolora.sh`/`fmla_import_chk.sh`/`jit_chk_temp.sh`); [`gb200/`](e2e_test_scripts/gb200) has the original leira runners + pod YAMLs (**historical** — the GB200 cluster is gone); [`gb300/`](e2e_test_scripts/gb300) has the **active** gcp-radixark-02 port (validated 2026-06-06, results + the kimi NVFP4+LoRA bug report in `gb300/results/`). See each [README](e2e_test_scripts/README.md) for per-file usage.

@@ -46,17 +46,17 @@ regression/
 │
 ├── gb200/                             # ── GB200 platform (leira cluster) ──
 │   ├── run_kimi.sh                    # entry point: Kimi regression (2-node MNNVL)
-│   ├── run_qwen35.sh                  # entry point: Qwen3.5 regression (1 node)
+│   ├── run_Qwen3.5-35B-A3B-FP8.sh                  # entry point: Qwen3.5 regression (1 node)
 │   └── models/
 │       ├── kimi/                      # model.env + pod.yaml + hooks.sh + MODEL.md
-│       └── qwen35/                    # (single pod + /mnt/nvme-b hostPath)
+│       └── Qwen3.5-35B-A3B-FP8/                    # (single pod + /mnt/nvme-b hostPath)
 │
 └── gb300/                             # ── GB300 platform (gcp-radixark-02 cluster, sm_103) ──
     ├── run_kimi.sh                    # entry point: Kimi regression (2-node MNNVL via DRA)
-    ├── run_qwen35.sh                  # entry point: Qwen3.5 regression (1 node)
+    ├── run_Qwen3.5-35B-A3B-FP8.sh                  # entry point: Qwen3.5 regression (1 node)
     └── models/
         ├── kimi/                      # 2-node GKE pods (ComputeDomain; weights on 2.9T eph SSD)
-        └── qwen35/                    # GKE-adapted pod (stateful-partition mounts, cohort
+        └── Qwen3.5-35B-A3B-FP8/                    # GKE-adapted pod (stateful-partition mounts, cohort
             │                          #   toleration, 45-min cold-JIT timeout)
             └── broadcast_jit_cache.sh # fan a built JIT cache out to all GB300 nodes
 ```
@@ -76,11 +76,11 @@ to `scripts/`.
 
 ---
 
-## 3. Manual run, step by step (example: GB300 / qwen35)
+## 3. Manual run, step by step (example: GB300 / Qwen3.5-35B-A3B-FP8)
 
-The worked example below targets `gb300/models/qwen35` (Qwen3.5-35B-A3B-FP8, 1 node, tp4/ep4,
+The worked example below targets `gb300/models/Qwen3.5-35B-A3B-FP8` (Qwen3.5-35B-A3B-FP8, 1 node, tp4/ep4,
 cluster `gcp-radixark-02`). For kimi or GB200 only the context/pod names/paths change — same
-steps. **Read `gb300/models/qwen35/MODEL.md` before editing anything.**
+steps. **Read `gb300/models/Qwen3.5-35B-A3B-FP8/MODEL.md` before editing anything.**
 
 ### Step 0 — Prep (local shell, once)
 
@@ -89,7 +89,7 @@ kubectl config use-context gcp-radixark-02         # gb300 ONLY uses this contex
 
 export ID=$(date +%Y%m%d-%H%M%S)                   # GB300 workload-naming convention
                                                    # (on GB200 any short dns-safe id, e.g. "yb")
-PLAT=gb300; MODEL=qwen35
+PLAT=gb300; MODEL=Qwen3.5-35B-A3B-FP8
 REG=<path-to>/tune-lora-perf/regression            # this directory
 export RUN_ROOT="$HOME/Downloads/sglang_${MODEL}_reg_${ID}_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$RUN_ROOT"
@@ -141,12 +141,12 @@ local branches).
 REPO=<local sglang checkout>
 BASE_SRC=<commit-or-branch-or-github-url>          # control
 VARIANT_SRC=<commit-or-branch-or-github-url>       # candidate
-mkdir -p "$RUN_ROOT/qwen35gb300"
+mkdir -p "$RUN_ROOT/Qwen3.5-35B-A3B-FP8-gb300"
 git -C "$REPO" fetch -q origin main
 build(){ git -C "$REPO" branch -f __bench_target "$2"
   mb=$(git -C "$REPO" merge-base origin/main __bench_target); head=$(git -C "$REPO" rev-parse __bench_target)
   git -C "$REPO" bundle create "/tmp/${MODEL}-$1.bundle" __bench_target --not "${mb}^"
-  { echo "$1_src=$2"; echo "$1_commit=$head"; } >> "$RUN_ROOT/qwen35gb300/meta.env"; }
+  { echo "$1_src=$2"; echo "$1_commit=$head"; } >> "$RUN_ROOT/Qwen3.5-35B-A3B-FP8-gb300/meta.env"; }
 build base "$BASE_SRC"; build variant "$VARIANT_SRC"
 kubectl cp "/tmp/${MODEL}-base.bundle"    "$P:/root/base.bundle"
 kubectl cp "/tmp/${MODEL}-variant.bundle" "$P:/root/variant.bundle"
@@ -165,22 +165,22 @@ kubectl exec "$P" -- bash -lc 'cd /root/sglang;
 ### Step 4 — Define the two cells, then run the driver
 
 The A/B definition lives in the `BASE_*`/`VARIANT_*` block of
-`gb300/models/qwen35/model.env` (LoRA on/off, extra server flags, launch env vars). Edit it
+`gb300/models/Qwen3.5-35B-A3B-FP8/model.env` (LoRA on/off, extra server flags, launch env vars). Edit it
 in place, or copy it and point `MODEL_ENV` at the copy. Consult `MODEL.md` first — e.g. for
 this model `SGLANG_OPT_LORA_OVERLAP_MAIN_ALLOC=1` is REQUIRED (without it decode is garbage
 that only the prompt-check catches) and two envs are forbidden.
 
 ```bash
 # preview the assembled launch commands without touching the cluster:
-DRY_RUN=1 bash "$REG/gb300/run_qwen35.sh"
+DRY_RUN=1 bash "$REG/gb300/run_Qwen3.5-35B-A3B-FP8.sh"
 
 # the real run (~1–2 h; the FIRST variant launch may cold-compile sm_103 JIT for up to 45 min):
-ID="$ID" RUN_ROOT="$RUN_ROOT" bash "$REG/gb300/run_qwen35.sh" > "$RUN_ROOT/run.out" 2>&1 &
+ID="$ID" RUN_ROOT="$RUN_ROOT" bash "$REG/gb300/run_Qwen3.5-35B-A3B-FP8.sh" > "$RUN_ROOT/run.out" 2>&1 &
 tail -f "$RUN_ROOT/run.out"     # look for: "GPU clean", "READY (~Ns)", warmup progress, "CELL ... done"
 
 # one-off cell edits without touching the repo:
-#   cp "$REG/gb300/models/qwen35/model.env" /tmp/my.env && vim /tmp/my.env
-#   ID="$ID" RUN_ROOT="$RUN_ROOT" MODEL_ENV=/tmp/my.env bash "$REG/gb300/run_qwen35.sh" ...
+#   cp "$REG/gb300/models/Qwen3.5-35B-A3B-FP8/model.env" /tmp/my.env && vim /tmp/my.env
+#   ID="$ID" RUN_ROOT="$RUN_ROOT" MODEL_ENV=/tmp/my.env bash "$REG/gb300/run_Qwen3.5-35B-A3B-FP8.sh" ...
 ```
 
 | | |
@@ -193,7 +193,7 @@ tail -f "$RUN_ROOT/run.out"     # look for: "GPU clean", "READY (~Ns)", warmup p
 $RUN_ROOT/
 ├── run.out                                  # driver log (watch this)
 ├── summary.md                               # written by step 5
-└── qwen35gb300/
+└── Qwen3.5-35B-A3B-FP8-gb300/
     ├── meta.env                             # commits + model/tolerances (machine-readable)
     ├── analysis_{base,variant}.txt          # written by step 5
     └── {base,variant}/
@@ -212,9 +212,9 @@ python3 "$REG/scripts/summary.py" "$RUN_ROOT"      # → $RUN_ROOT/summary.md
 SK="$HOME/.claude/skills/llm-torch-profiler-analysis"   # or clone BBuf/AI-Infra-Auto-Driven-SKILLS
 for cell in base variant; do
   python3 "$SK/scripts/analyze_llm_torch_profile.py" \
-    --mapping-input "$RUN_ROOT/qwen35gb300/$cell/traces/graph_off" \
-    --formal-input  "$RUN_ROOT/qwen35gb300/$cell/traces/graph_on" \
-    | tee "$RUN_ROOT/qwen35gb300/analysis_$cell.txt"
+    --mapping-input "$RUN_ROOT/Qwen3.5-35B-A3B-FP8-gb300/$cell/traces/graph_off" \
+    --formal-input  "$RUN_ROOT/Qwen3.5-35B-A3B-FP8-gb300/$cell/traces/graph_on" \
+    | tee "$RUN_ROOT/Qwen3.5-35B-A3B-FP8-gb300/analysis_$cell.txt"
 done
 ```
 
@@ -222,7 +222,7 @@ done
 |---|---|
 | **Input** | `$RUN_ROOT` (reads `meta.env` + acc/bench/sanity files + traces); `ACC_TOL`/`PERF_TOL`/`LAYERS` env-overridable |
 | **Output** | `summary.md` — acc-diff table, perf-delta table (prefill/decode split), the 5-metric speed table with sanity verdicts; `analysis_<cell>.txt` — per-kernel timing attribution |
-| **Reference numbers** | gb300/qwen35 validated 2026-06-06: no-LoRA ceiling 3570/6206/10836 tok/s @ bs16/32/64; fast-path LoRA = 77.6/80.0/81.3% of ceiling (MODEL.md) |
+| **Reference numbers** | gb300/Qwen3.5-35B-A3B-FP8 validated 2026-06-06: no-LoRA ceiling 3570/6206/10836 tok/s @ bs16/32/64; fast-path LoRA = 77.6/80.0/81.3% of ceiling (MODEL.md) |
 
 ### Step 6 — Publish (opt-in) and clean up
 
@@ -246,7 +246,7 @@ so future pods land warm regardless of where they schedule:
 
 ```bash
 KUBECONFIG=<gcp-radixark-02 kubeconfig> \
-  bash "$REG/gb300/models/qwen35/broadcast_jit_cache.sh" <source-node-or-short-suffix>  # e.g. tg41
+  bash "$REG/gb300/models/Qwen3.5-35B-A3B-FP8/broadcast_jit_cache.sh" <source-node-or-short-suffix>  # e.g. tg41
 # DRY=1 → print the node plan only;  TARGETS="<node> <node>" → retry a subset
 ```
 
@@ -273,7 +273,7 @@ kubectl exec <pod> -- python3 /tmp/prompts_check.py --lora alpha --model <model-
 
 - [`SKILL.md`](SKILL.md) — the full workflow, the 10 hard-won robustness rules (do NOT
   "simplify" them away), and current validation status per platform.
-- `gb300/models/qwen35/MODEL.md` — GB300 deltas, env-var matrix, expected numbers, cold-JIT
-  timing. (`gb200/models/qwen35/MODEL.md` holds the full base matrix it references.)
+- `gb300/models/Qwen3.5-35B-A3B-FP8/MODEL.md` — GB300 deltas, env-var matrix, expected numbers, cold-JIT
+  timing. (`gb200/models/Qwen3.5-35B-A3B-FP8/MODEL.md` holds the full base matrix it references.)
 - `gb300/models/kimi/MODEL.md` — the staged 2-node GB300 run (ComputeDomain/DRA; the 2-node
   code paths are ported from the proven GB200 kimi runner but not yet exercised live on GB300).

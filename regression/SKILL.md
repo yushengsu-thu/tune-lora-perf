@@ -7,8 +7,8 @@ description: >-
   and CPU+GPU torch profiling (cuda-graph on + off), producing one downloadable summary.
   Model-agnostic driver (scripts/run_regression.sh) + per-platform model packs
   (<platform>/models/<m>/{model.env,pod.yaml,hooks.sh,MODEL.md}). Supported today:
-  gb200/kimi (Kimi-K2.5-NVFP4, 2-node MNNVL), gb200/qwen35 (Qwen3.5-35B-A3B-FP8, 1 node
-  tp4/ep4, leira) and gb300/models/qwen35 (same model on GB300/sm_103, gcp-radixark-02).
+  gb200/kimi (Kimi-K2.5-NVFP4, 2-node MNNVL), gb200/Qwen3.5-35B-A3B-FP8 (Qwen3.5-35B-A3B-FP8, 1 node
+  tp4/ep4, leira) and gb300/models/Qwen3.5-35B-A3B-FP8 (same model on GB300/sm_103, gcp-radixark-02).
   Use when the user asks to acc-and-bench-and-profile a serving change — a LoRA toggle, a
   MoE/kernel backend swap, an env-var toggle, or a PR — on one of these models. Read
   <platform>/models/<m>/MODEL.md BEFORE editing cells: it holds the model's env-var matrix,
@@ -22,10 +22,10 @@ Runs **all four tests** on a **base** vs a **variant** serving config and produc
 a per-endpoint prompt-check table, and kernel-structure profiler traces.
 
 > **Validation status (2026-06-06): full e2e PASS on BOTH GB200 and GB300.**
-> - **GB200** (`leira`, qwen35): driver exit 0, 10/10 traces gzip-OK, variant decode coherent,
+> - **GB200** (`leira`, Qwen3.5-35B-A3B-FP8): driver exit 0, 10/10 traces gzip-OK, variant decode coherent,
 >   fast-path = **78.6/81.3/81.8%** of the no-LoRA ceiling (PR #27329 claims 79/84/82%), all
 >   6 sanity checks ≤2.1%.
-> - **GB300** (`gcp-radixark-02`, gb300/qwen35, sm_103 — first ever): driver exit 0, 10/10
+> - **GB300** (`gcp-radixark-02`, gb300/Qwen3.5-35B-A3B-FP8, sm_103 — first ever): driver exit 0, 10/10
 >   traces, variant coherent, fast-path = **77.6/80.0/81.3%** of ceiling (3570/6206/10836
 >   tok/s base), sanity ≤3%. The launch-retry mechanism proved itself live: attempt 1 hit the
 >   cold sm_103 JIT timeout, attempt 2 came up READY in ~8 min on the warm cache.
@@ -62,8 +62,8 @@ regression/
 │   ├── summary.py            # acc-diff + perf-delta + 5-metric speed table -> summary.md
 │   ├── build_readme.py       # per-run README for publishing
 │   └── publish.sh            # small files -> git commit; traces -> GitHub Release (append-only)
-├── gb200/                    # GB200 platform (leira): run_kimi.sh, run_qwen35.sh + models/
-└── gb300/                    # GB300 platform (gcp-radixark-02): gb300/run_qwen35.sh + models/
+├── gb200/                    # GB200 platform (leira): run_kimi.sh, run_Qwen3.5-35B-A3B-FP8.sh + models/
+└── gb300/                    # GB300 platform (gcp-radixark-02): gb300/run_Qwen3.5-35B-A3B-FP8.sh + models/
     └── models/<m>/           # per-model parameter pack (the ONLY place model specifics live)
         ├── model.env         # VALUES: topology, paths, flags, profile recipe, tolerances
         ├── pod.yaml          # K8s env (apply with the ${ID} sed below)
@@ -160,7 +160,7 @@ acc/bench/prompts download incrementally to `$RUN_ROOT/<model>/<cell>/{acc,bench
 the one graph-on launch.
 
 Model hooks (optional, in `models/<m>/hooks.sh`): `hook_post_setup` runs once after prewarm
-(qwen35: record layer count); `hook_between_cells` runs before each cell's first launch
+(Qwen3.5-35B-A3B-FP8: record layer count); `hook_between_cells` runs before each cell's first launch
 (kimi: ghost-HBM drop_caches).
 
 **Dry-run** (verify the assembled launch surface without touching the cluster):
@@ -186,7 +186,7 @@ kubectl exec <pod> -- python3 /tmp/prompts_check.py --lora alpha --model <model-
 ```bash
 kubectl config use-context gcp-radixark-02   # gb300. gb200 used `leira` — that cluster is GONE
 export ID=<dns-safe-id>                       # ASK the user if not given
-PLAT=gb300; MODEL=qwen35                      # or gb300/kimi; gb200 packs are historical (leira gone)
+PLAT=gb300; MODEL=Qwen3.5-35B-A3B-FP8                      # or gb300/kimi; gb200 packs are historical (leira gone)
 export RUN_ROOT="$HOME/Downloads/sglang_${MODEL}_reg_${ID}_$(date +%Y%m%d_%H%M%S)"; mkdir -p "$RUN_ROOT"
 REG=<path-to>/regression                      # repo checkout or ~/.claude/skills/regression
 ```
@@ -198,7 +198,8 @@ private LoRA repos).
 ```bash
 sed "s/\${ID}/${ID}/g" "$REG/$PLAT/models/$MODEL/pod.yaml" | kubectl apply -f -
 # kimi (2 pods):   kubectl wait --for=condition=Ready pod/mnnvl-kimi-${ID}-0 pod/mnnvl-kimi-${ID}-1 --timeout=25m
-# qwen35 (1 pod):  kubectl wait --for=condition=Ready pod/sglang-qwen35-${ID} --timeout=20m
+# Qwen3.5-35B-A3B-FP8 (1 pod, gb300): kubectl wait --for=condition=Ready pod/sglang-gb300-qwen3vl-yushengsu-${ID} --timeout=20m
+#                                      (gb200's pod name was sglang-qwen35-${ID})
 ```
 
 ## 2. Wait for setup (HF downloads + editable install, per pod)
@@ -282,7 +283,7 @@ so the summary shows decode is healthy (no `!!!!`).
 Small artifacts (acc/bench/prompts/README, ~50 KB) → a new commit at
 `<RESULTS_REPO>/runs/<RUN_TAG>/`; big traces → a GitHub Release tagged `<RUN_TAG>`
 (one `<cell>_traces.tar.gz` per cell). Default tag: `<tag_prefix>-<variant-shorthash>-<timestamp>`
-(prefix from `model.env`, e.g. `kimi-reg` / `qwen35-reg`). Append-only — prior runs/releases stay.
+(prefix from `model.env`, e.g. `kimi-reg` / `Qwen3.5-35B-A3B-FP8-reg`). Append-only — prior runs/releases stay.
 
 ```bash
 # Set BEFORE launching run_<model>.sh — the driver auto-calls publish.sh on success:

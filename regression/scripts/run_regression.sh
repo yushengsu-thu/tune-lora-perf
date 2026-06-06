@@ -2,7 +2,7 @@
 # Generic base-vs-variant regression driver — acc + bench + prompt-check + profile. HARDENED.
 #
 # Usage:  run_regression.sh <model>        (<model> = a dir under ../models/ with model.env)
-#         or via the thin wrappers: ../run_kimi.sh / ../run_qwen35.sh
+#         or via the thin wrappers: ../run_kimi.sh / ../run_Qwen3.5-35B-A3B-FP8.sh
 #         DRY_RUN=1 run_regression.sh <model>   -> print the assembled launch commands and exit
 #
 # ALL model-specific VALUES live in models/<model>/model.env (paths, topology, flags, profile

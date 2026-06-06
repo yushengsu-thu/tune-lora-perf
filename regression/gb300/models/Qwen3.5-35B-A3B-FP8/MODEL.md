@@ -1,6 +1,6 @@
 # Qwen3.5-35B-A3B-FP8 on GB300 — model knowledge
 
-**GB300 (sm_103, Blackwell Ultra) port of the [`qwen35`](../../../gb200/models/qwen35/MODEL.md) pack** — read that
+**GB300 (sm_103, Blackwell Ultra) port of the [`Qwen3.5-35B-A3B-FP8`](../../../gb200/models/Qwen3.5-35B-A3B-FP8/MODEL.md) pack** — read that
 file for the full env matrix, robustness items, and adapter caveats; everything there applies.
 This file only records the GB300 deltas.
 
@@ -13,7 +13,7 @@ This file only records the GB300 deltas.
 
 ## Deltas vs the GB200/leira pack
 
-| | `gb200/models/qwen35` (leira) | `gb300/models/qwen35` (gcp-radixark-02) |
+| | `gb200/models/Qwen3.5-35B-A3B-FP8` (leira) | `gb300/models/Qwen3.5-35B-A3B-FP8` (gcp-radixark-02) |
 |---|---|---|
 | pod.yaml | `runtimeClassName: nvidia-legacy`, privileged, hostPath on `/mnt/nvme-b` (big dedicated raid) | no runtimeClass, no privileged, hostPath on **`/mnt/stateful_partition`** (the node's 95G persistent NVMe partition): `/root/.cache` (JIT — kills the >30-min cold sm_103 build on relaunches) + `/data` (weights — no re-download/relay per pod). Wiped only on node re-image. **Disk budget is tight:** model 40G + adapter 2.4G + JIT cache on a 95G partition — don't park other large artifacts there. |
 | MODEL_PATH / LORA_PATH | `/data/...` | `/data/...` (same paths now) |
@@ -50,7 +50,7 @@ This file only records the GB300 deltas.
   regardless of which node it schedules on:
   ```bash
   KUBECONFIG=<gcp-radixark-02 kubeconfig> \
-    bash gb300/models/qwen35/broadcast_jit_cache.sh <node-that-just-built-it>   # e.g. tg41
+    bash gb300/models/Qwen3.5-35B-A3B-FP8/broadcast_jit_cache.sh <node-that-just-built-it>   # e.g. tg41
   # DRY=1 to preview the node list; TARGETS="<nodes>" to retry a subset.
   ```
   Run it after any regression run that JIT-compiled a new commit/flashinfer combo. Mechanics:

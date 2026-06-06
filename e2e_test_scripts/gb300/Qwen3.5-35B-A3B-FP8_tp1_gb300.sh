@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# GB300 port of ../gb200/qwen_tp1_v2.sh (single-GPU tp1: PR sgl-lora vs oss-main no-LoRA baseline).
+# GB300 port of ../gb200/Qwen3.5-35B-A3B-FP8_tp1_v2.sh (single-GPU tp1: PR sgl-lora vs oss-main no-LoRA baseline).
 # Deltas vs GB200: READY wait 150x10s->270x10s (45 min, cold sm_103 JIT headroom),
-# PR backend parameterized (PRBACKEND), flashinfer pin guard (see qwen_run_gb300.sh header).
-# Usage: qwen_tp1_gb300.sh <REF=full-lora-opti|main-base> <TAG>   (GPU0, tp1)
+# PR backend parameterized (PRBACKEND), flashinfer pin guard (see Qwen3.5-35B-A3B-FP8_run_gb300.sh header).
+# Usage: Qwen3.5-35B-A3B-FP8_tp1_gb300.sh <REF=full-lora-opti|main-base> <TAG>   (GPU0, tp1)
 REF=$1; TAG=$2; PORT=30001; MODEL=/data/Qwen3.5-35B-A3B-FP8; LORAP=/data/qwen35_35b_lora_alpha; H=/tmp/flo_helpers; cd /root/sglang
 PRBACKEND=${PRBACKEND:-experimental_sgl_trtllm}
 FLASHINFER_PIN=${FLASHINFER_PIN:-0.6.11.post1}

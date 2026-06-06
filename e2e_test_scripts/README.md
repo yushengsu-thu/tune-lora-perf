@@ -22,8 +22,8 @@ Deploy: `kubectl exec -i <pod> -- bash -c 'mkdir -p /tmp/flo_helpers; cat > /tmp
 | file | what it checks |
 |---|---|
 | `reformat_sanity.sh` | import-sanity: OFF → experimental package NOT loaded; ON → package + JIT loaders + correction modules import. |
-| `qwen_reformat_chk.sh` | qwen sgl-lora launch (real import order, no circular) + base/lora gsm8k. |
-| `qwen_sglnolora.sh` | qwen on the sgl backend with LoRA OFF → confirms FP8 no-LoRA delegates to upstream. |
+| `Qwen3.5-35B-A3B-FP8_reformat_chk.sh` | qwen sgl-lora launch (real import order, no circular) + base/lora gsm8k. |
+| `Qwen3.5-35B-A3B-FP8_sglnolora.sh` | qwen on the sgl backend with LoRA OFF → confirms FP8 no-LoRA delegates to upstream. |
 | `fmla_import_chk.sh` | forward_mla gating import-sanity (upstream + experimental correction modules resolve). |
 | `jit_chk_temp.sh` | builds a renamed `trtllm_lora_temp` JIT kimi kernel to confirm the csrc rename compiles. |
 

@@ -1,21 +1,21 @@
 ---
-# GB300 port of the qwen e2e pod (TP4/EP4, 4 GPU, single node) for qwen_run_gb300.sh /
-# qwen_base_gb300.sh. Derived from ../../regression/models/qwen35_gb300/pod.yaml — same
-# cluster conventions (gcp-radixark-02, GKE, a4x-maxgpu-4g-metal / nvidia-gb300):
-#   * NO runtimeClassName (GKE has no `nvidia` class) / NO privileged
-#   * cohort toleration (free gb300 nodes carry radixark.io/cohort=true:NoSchedule)
-#   * hostPath on /mnt/stateful_partition (95G persistent NVMe): /root/.cache (JIT cache —
-#     kills the >30-min cold sm_103 trtllm_lora_temp build on relaunch) + /data (weights)
-#   * image PINNED by digest + flashinfer re-pinned to 0.6.11.post1 in setup: the floating
-#     dev-cu13 tag and the branch pyproject's flashinfer 0.6.12 both changed
-#     get_sf_out_offset_* signatures -> trtllm_lora_temp JIT compile error on sm_103.
-# Launch: ID=$(date +%Y%m%d-%H%M%S) envsubst < qwen-pod.yaml | kubectl --context gcp-radixark-02 apply -f -
+# Qwen3.5-35B-A3B-FP8 regression pod — GB300 (sm_103) variant, SINGLE node, 4 GPU (TP=4, EP=4).
+# Target cluster: gcp-radixark-02 (GKE, a4x-maxgpu-4g-metal / nvidia-gb300, 25 nodes).
+# Differences vs the GB200/leira pod (models/Qwen3.5-35B-A3B-FP8/pod.yaml), matching the cluster's conventions
+# (taken from working pods on that cluster):
+#   * NO runtimeClassName (GKE; no `nvidia-legacy` class there)
+#   * NO privileged/securityContext (cluster pods run without it; torch profiler works)
+#   * hostPath on /mnt/stateful_partition (the node's 95G persistent NVMe partition — survives
+#     pod deletion, wiped only on node re-image): /root/.cache (JIT/autotune cache: deep_gemm,
+#     flashinfer, triton, and the PR's trtllm_lora_temp build — kills the >30-min cold sm_103
+#     JIT on relaunches) and /data (model + LoRA weights — kills the per-pod re-download/relay)
+#   * shm 128Gi, memory limit 850Gi (per the cluster's working pods)
 apiVersion: v1
 kind: Pod
 metadata:
-  name: flo-qwen-gb300-yushengsu-${ID}
+  name: sglang-gb300-qwen3vl-yushengsu-${ID}
   labels:
-    app: flo-qwen-gb300-yushengsu-${ID}
+    app: sglang-gb300-qwen3vl-yushengsu-${ID}
 spec:
   tolerations:
   - key: "kubernetes.io/arch"
@@ -25,16 +25,19 @@ spec:
   - key: "nvidia.com/gpu"
     operator: "Exists"
     effect: "NoSchedule"
-  # Free gb300 nodes carry this cohort-reservation taint — without it the pod stays Pending
-  # even with idle GPUs. (Do NOT tolerate gpu-maintenance — those nodes are drained for a reason.)
+  # The cluster's FREE gb300 nodes carry this org cohort-reservation taint — without the
+  # toleration they count as "untolerated" and the pod stays Pending even with 4 idle GPUs.
+  # (Do NOT add a gpu-maintenance toleration — those nodes are drained for a reason.)
   - key: "radixark.io/cohort"
     operator: "Equal"
     value: "true"
     effect: "NoSchedule"
   containers:
   - name: sglang
-    # Pinned digest: PR's trtllm_lora_temp JIT compiles against this build's tensorrt_llm
-    # headers (see header note). Re-pin/un-pin when the PR rebases onto current flashinfer.
+    # Image PINNED by digest: PR #27329's trtllm_lora_temp JIT kernels compile against this
+    # build's tensorrt_llm headers. The floating dev-cu13 tag moved (2026-06-06) to a build whose
+    # get_sf_out_offset_* signatures changed -> JIT compile error at variant launch. Re-pin (or
+    # un-pin) when the PR rebases onto current main/flashinfer.
     image: lmsysorg/sglang@sha256:97e7cd699dc879b56bc9f7a11f25c060fa4a6137e901a637f4378e9b01607a01
     imagePullPolicy: IfNotPresent
     command:
@@ -44,6 +47,7 @@ spec:
       set -e
       cat > /root/setup.sh <<'SETUP'
       #!/bin/bash
+      # No `set -u`: the stock ~/.bashrc references $PS1 (unbound in non-interactive shells).
       set -o pipefail
       log(){ echo "[setup $(date -u +%H:%M:%S)] $*"; }
       log "ensuring numactl is present (keeps page cache off HBM NUMA nodes)"
@@ -54,15 +58,15 @@ spec:
       if [ -d /root/sglang/.git ]; then
         log "updating /root/sglang -> origin/main"; cd /root/sglang
         git remote set-url origin https://github.com/yushengsu-thu/sglang.git 2>/dev/null || true
-        git fetch origin main && git reset --hard origin/main
+        # Pinned baseline: the PR #27329 merge commit on sgl-project main (deterministic setup;
+        # the driver checks out the injected __bench_* refs per cell anyway).
+        git fetch origin c9f582a272dcc7109bf7da584867f47995602035 && git reset --hard c9f582a272dcc7109bf7da584867f47995602035
       else
         log "cloning sglang"; rm -rf /root/sglang && git clone https://github.com/yushengsu-thu/sglang /root/sglang; cd /root/sglang
       fi
       log "pip install -e /root/sglang/python (a few minutes)"; cd /root/sglang && pip install -e python
-      # The editable install pulls the pyproject's flashinfer 0.6.12 — re-pin to the version
-      # matching the pinned image's flashinfer-jit-cache (run scripts re-check this per run).
-      log "re-pinning flashinfer -> 0.6.11.post1 (matches image jit-cache)"
-      pip install -q "flashinfer_python[cu13]==0.6.11.post1" "flashinfer_cubin==0.6.11.post1" || true
+      # Weights persist on /data (hostPath -> the node's stateful partition) so pod recreations
+      # on the same node reuse them; flock makes a concurrent same-node run WAIT, not clobber.
       mkdir -p /data/Qwen3.5-35B-A3B-FP8 /data/qwen35_35b_lora_alpha
       (
         flock 9
@@ -71,7 +75,7 @@ spec:
           numactl --membind=0,1 hf download Qwen/Qwen3.5-35B-A3B-FP8 --local-dir /data/Qwen3.5-35B-A3B-FP8
         else log "reusing cached /data/Qwen3.5-35B-A3B-FP8"; fi
         if [ ! -f /data/qwen35_35b_lora_alpha/adapter_config.json ]; then
-          log "downloading jybsuper/qwen35_35b_lora_alpha (private; needs HF_TOKEN; OK to fail — relay the adapter instead, see ../../regression/models/qwen35_gb300/MODEL.md)"
+          log "downloading jybsuper/qwen35_35b_lora_alpha (private; needs HF_TOKEN; OK to fail — relay the adapter instead, see MODEL.md)"
           numactl --membind=0,1 hf download jybsuper/qwen35_35b_lora_alpha --local-dir /data/qwen35_35b_lora_alpha || true
         else log "reusing cached /data/qwen35_35b_lora_alpha"; fi
       ) 9>/data/.qwen35-download.lock
@@ -100,7 +104,7 @@ spec:
     resources:
       requests:
         nvidia.com/gpu: 4
-        memory: "100Gi"   # scheduling reservation only — keep small; free nodes are tight
+        memory: "100Gi"   # scheduling reservation only — keep small; the busy cluster's free nodes are tight
         cpu: "8"
         ephemeral-storage: "60Gi"
       limits:
@@ -111,8 +115,11 @@ spec:
     volumeMounts:
     - name: shm
       mountPath: /dev/shm
+    # Persistent PER-NODE JIT/autotune cache (deep_gemm, flashinfer, triton, trtllm_lora_temp).
+    # Survives pod delete -> a relaunch on the SAME node skips the >30-min cold sm_103 JIT.
     - name: dot-cache
       mountPath: /root/.cache
+    # Persistent per-node weights (model + LoRA) — no re-download/relay on pod recreation.
     - name: data
       mountPath: /data
   volumes:
