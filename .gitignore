@@ -1,2 +1,4 @@
 .DS_Store
 *.pyc
+dev/.state/
+dev/results/

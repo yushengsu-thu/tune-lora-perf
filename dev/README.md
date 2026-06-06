@@ -21,6 +21,7 @@ dev/
 ├── 4_run_acc.sh         # LoRA vs no-LoRA accuracy → per-token logprob diff vs ACC_TOL
 ├── 5_run_profile.sh     # LoRA vs no-LoRA torch profiles → <DATE>-<TIME>/{lora,no-lora}/
 ├── 6_upload_results.sh  # push the run dir to github.com/<you>/lora_perf_lora_profile
+├── 7_broadcast_jit_cache.sh  # (optional) copy this node's JIT cache to ALL GB300 nodes
 ├── run_all.sh           # the whole chain: run_all.sh <model|all>
 ├── .state/<model>.env   # pod ID + RUN_DIR handoff between steps (written by 1, read by 2-6)
 └── results/<model>/<DATE>-<TIME>/   # everything a run produces, locally
@@ -78,7 +79,7 @@ each = 6 launches total) — that's the price of standalone, individually-rerunn
 | | |
 |---|---|
 | input | model name; optional `ID=<dns-safe-id>` (default `date +%Y%m%d-%H%M%S`) |
-| does | **free-node pre-check** (the pod requests a full node's 4 GPUs, so the K8s scheduler auto-places it on an empty GB300 node; the pre-check fails fast instead of hanging Pending when none is free) → `kubectl apply` the pack's `POD_YAML` (e.g. qwen: 1 pod `sglang-gb300-qwen3vl-yushengsu-<ID>`; kimi: 2 pods + ComputeDomain/MNNVL, anti-affinity forces two different nodes), wait Ready, wait `/root/.setup-done` (weights + base install) |
+| does | **free-node pre-check** (the pod requests a full node's 4 GPUs, so the K8s scheduler auto-places it on an empty GB300 node; the pre-check fails fast instead of hanging Pending when none is free) → `kubectl apply` the pack's `POD_YAML` (e.g. qwen: 1 pod `sglang-gb300-qwen35-yushengsu-<ID>`; kimi: 2 pods + ComputeDomain/MNNVL, anti-affinity forces two different nodes), wait Ready, wait `/root/.setup-done` (weights + base install) |
 | output | running pod(s); `dev/.state/<model>.env` with the pod `ID` |
 | verify | pod Ready + setup-done on every pod + ≥4 GPUs visible per pod |
 
@@ -112,6 +113,15 @@ each = 6 launches total) — that's the price of standalone, individually-rerunn
 > acc is prefill-only — it **cannot** see decode-accumulating garbage (proven: a corrupted-decode
 > server scored clean acc while generating `!!!!`). The per-cell coherence probe is the decode gate.
 
+> ⚠ **Reference-applicability rule:** the `.pt` references in `hf.co/datasets/yushengsu/datasets`
+> only apply when the served **adapter carries the `experts_shared_outer_loras` tag**
+> ([sgl-project/sglang#21466](https://github.com/sgl-project/sglang/pull/21466)). A **general**
+> adapter (e.g. `jybsuper/qwen35_35b_lora_alpha`) must use its **own bundled**
+> `compare_sample_train_data.pt` (the default) — against a mismatched reference the KL table is
+> meaningless (measured 2026-06-06: KL≈0.42–0.52 vs floor 0.0006, **even for the no-lora cell**;
+> the lora-vs-no-lora table stays valid either way). The script detects the tag in
+> `adapter_config.json` and refuses a mismatched `ACC_HF_FILE` (`ACC_FORCE=1` overrides).
+
 ### 5. `5_run_profile.sh <model>` — LoRA vs no-LoRA profile
 
 | | |
@@ -130,9 +140,25 @@ each = 6 launches total) — that's the price of standalone, individually-rerunn
 | output | `https://github.com/<you>/lora_perf_lora_profile/tree/main/runs/<model>/<DATE>-<TIME>` |
 | verify | pushed path readable via the GitHub API |
 
+### 7. `7_broadcast_jit_cache.sh <model>` — (optional) warm every node
+
+The JIT/compile cache (deep_gemm, flashinfer, triton, trtllm_lora_temp) already **persists
+per node**: the pod mounts `/root/.cache` on the node's
+`/mnt/stateful_partition/sglang-dot-cache` (hostPath), so a relaunch on the *same* node skips
+the >30-min cold sm_103 JIT. This step copies that dir from the current run's node to **every
+other GB300 GPU node** (size-verified chunks via temporary non-GPU sync pods — mechanics in
+[`../regression/gb300/models/Qwen3.5-35B-A3B-FP8/broadcast_jit_cache.sh`](../regression/gb300/models/Qwen3.5-35B-A3B-FP8/broadcast_jit_cache.sh)),
+so **any future pod lands warm no matter which node it gets**. The cache dir is node-level and
+model-agnostic — one broadcast covers everything compiled on the source node. Run it after a
+successful run, while the pods still exist (the source node is looked up from the head pod).
+Not part of `run_all` (multi-GB transfer; run it when the cache actually changed — new
+flashinfer pin, new compiled kernels). Kimi's fp4 autotune is process-local and can't be
+cached — only its JIT kernels benefit.
+
 ### `run_all.sh <model|all>` — everything
 
 Runs 1→2→3→4→5→6; each step's own verification gates the next; first failure aborts.
+(7 is manual — broadcast when the cache changed.)
 
 ## Notes
 

@@ -198,7 +198,7 @@ private LoRA repos).
 ```bash
 sed "s/\${ID}/${ID}/g" "$REG/$PLAT/models/$MODEL/pod.yaml" | kubectl apply -f -
 # Kimi-K2.5-NVFP4 (2 pods):   kubectl wait --for=condition=Ready pod/mnnvl-kimi-${ID}-0 pod/mnnvl-kimi-${ID}-1 --timeout=25m
-# Qwen3.5-35B-A3B-FP8 (1 pod, gb300): kubectl wait --for=condition=Ready pod/sglang-gb300-qwen3vl-yushengsu-${ID} --timeout=20m
+# Qwen3.5-35B-A3B-FP8 (1 pod, gb300): kubectl wait --for=condition=Ready pod/sglang-gb300-qwen35-yushengsu-${ID} --timeout=20m
 #                                      (gb200's pod name was sglang-qwen35-${ID})
 ```
 

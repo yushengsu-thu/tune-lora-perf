@@ -169,7 +169,7 @@ pull_trace(){  # $1=rank $2=remote-dir $3=local-file ; rc=1 if still bad
     s=$($KC exec "$pod" -- bash -lc "find ${src} \( -name '*-TP-${r}-EP-*.trace.json.gz' -o -name '*-TP-${r}.trace.json.gz' \) -printf '%s\n' 2>/dev/null | head -1")
     [ "${s:-0}" -ge 10000 ] && break; sleep 15
   done
-  for w in 1 2 3; do
+  for w in $(seq 1 6); do   # ~96MB streams truncate often on this GKE API server — 3 was not enough (seen 2026-06-06)
     $KC exec "$pod" -- bash -lc "f=\$(find ${src} \( -name '*-TP-${r}-EP-*.trace.json.gz' -o -name '*-TP-${r}.trace.json.gz' \) 2>/dev/null | head -1); [ -n \"\$f\" ] && cat \"\$f\"" > "$dst" 2>/dev/null
     gzip -t "$dst" 2>/dev/null && return 0
     echo "    TP${r} pull truncated (attempt $w) — retrying"

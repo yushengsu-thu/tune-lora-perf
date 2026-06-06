@@ -6,6 +6,14 @@
 #        report KL(=0.5·mean((a−b)²)) of sglang-lora against both, next to the inherent
 #        KL(vLLM, trainer) noise floor. Reference .pt files live in the (private) HF dataset
 #        hf.co/datasets/yushengsu/datasets — select one with ACC_HF_FILE=<path-in-repo>.
+#    ⚠ REFERENCE-APPLICABILITY RULE: the yushengsu/datasets references ONLY apply when the
+#        served adapter carries the `experts_shared_outer_loras` tag (the semantics of
+#        github.com/sgl-project/sglang/pull/21466). A GENERAL adapter (e.g.
+#        jybsuper/qwen35_35b_lora_alpha) must use its OWN bundled compare_sample_train_data.pt
+#        (the default ACC_DATA) — against the wrong reference the KL table is meaningless
+#        (measured 2026-06-06: KL≈0.42–0.52 vs floor 0.0006, even for the no-lora cell).
+#        The script detects the tag in ${LORA_PATH}/adapter_config.json and refuses a
+#        mismatched ACC_HF_FILE (ACC_FORCE=1 overrides).
 #    Feeds compare_sample_train_data.pt to /generate with max_new_tokens=0 + return_logprob
 #    (prefill-only, no sampling) for BOTH cells.
 #    NOTE: prefill-only — it CANNOT see decode garbage; the coherence gate (run per cell here
@@ -25,6 +33,22 @@ load_state; ensure_run_dir
 OUTROOT=/tmp/dev_run
 ACC_DATA="${ACC_DATA:-${LORA_PATH}/compare_sample_train_data.pt}"
 echo "== [4/acc] $MODEL  data=${ACC_DATA}  tol=${ACC_TOL}  -> ${RUN_DIR}/acc"
+
+# ---- reference-applicability gate (see the header RULE) ----
+# yushengsu/datasets references <-> experts_shared_outer_loras-tagged adapters ONLY.
+ESOL=$(kh "grep -qF experts_shared_outer_loras ${LORA_PATH}/adapter_config.json 2>/dev/null && echo 1 || echo 0" | tr -d '[:space:]')
+echo "-- adapter experts_shared_outer_loras tag: ${ESOL:-0}"
+if [ -n "${ACC_HF_FILE:-}" ] && [ "${ESOL:-0}" != 1 ] && [ "${ACC_FORCE:-0}" != 1 ]; then
+  echo "ERROR: ACC_HF_FILE is set but the served adapter (${LORA_PATH}) has NO"
+  echo "       experts_shared_outer_loras tag — the yushengsu/datasets references only apply"
+  echo "       to adapters with that tag (sgl-project/sglang#21466). For a general adapter use"
+  echo "       its bundled compare_sample_train_data.pt (the default). ACC_FORCE=1 overrides."
+  exit 1
+fi
+if [ "${ESOL:-0}" = 1 ] && [ -z "${ACC_HF_FILE:-}" ]; then
+  echo "NOTE: adapter IS experts_shared_outer_loras-tagged — its bundled .pt may not match;"
+  echo "      pick a reference from hf.co/datasets/yushengsu/datasets via ACC_HF_FILE=<file>."
+fi
 
 # Optional: pull a reference .pt from the (private) HF dataset repo instead of the adapter's copy.
 #   ACC_HF_FILE=<path-in-repo> [ACC_HF_REPO=yushengsu/datasets] bash 4_run_acc.sh qwen

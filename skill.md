@@ -13,6 +13,22 @@
 禁止只看 bench 的 e2e 匯總數字（throughput / latency 那行）就下結論。**必須同時去看 server log 裡打印出來的 decode throughput（gen/decode token/s）**，確認它跟 e2e 結果一致，並把這個 decode thpt 數字一起記錄到 journal.md / PR description 裡。
 ---
 
+## ⚠️ 規則（ACC-REFERENCE-RULE）：acc 的 reference data 要跟 adapter 種類匹配
+跑 acc / KL-vs-reference 比較時，**reference 資料的選擇取決於 adapter 有沒有
+`experts_shared_outer_loras` tag**（https://github.com/sgl-project/sglang/pull/21466 的語義，
+看 adapter_config.json）：
+- **一般 adapter**（如 `jybsuper/qwen35_35b_lora_alpha`）→ 用 adapter repo **內附**的
+  `compare_sample_train_data.pt`（dev/4_run_acc.sh 的預設）。
+- **有 `experts_shared_outer_loras` tag 的 adapter** → 才用
+  `hf.co/datasets/yushengsu/datasets` 裡的 reference（`ACC_HF_FILE=<file>`）。
+
+用錯 reference 時 KL-vs-reference 表**沒有意義**（實測 2026-06-06：KL≈0.42–0.52 vs floor
+0.0006，連 no-lora cell 都超大 — 這不是 LoRA 路徑壞掉，是 reference 不可比）；
+lora-vs-no-lora 那張表不受影響。`dev/4_run_acc.sh` 會自動偵測 tag 並擋下錯配
+（`ACC_FORCE=1` 可強制覆寫）。
+
+---
+
 ## ⚠️ 規則（STUCK-CHECK-RULE）：看起來卡住 ≠ 真的卡死，先驗證再動手
 當一個 launch/run/autotune **看起來卡住**（log 不動、某步 elapsed 一直往上爬、進度條停在同一步），**不要**直接假設它死了就 kill/重啟。要**時不時用 `top`/`htop`/`nvidia-smi` 之類去看**它到底在不在跑：
 - `top`/`htop`：CPU 在忙 → 通常是 JIT/編譯/autotune 在跑（例如 cold `fp4_gemm` autotune 是 **CPU-bound**，這時 **GPU util 會是 0%**，但它沒卡）。

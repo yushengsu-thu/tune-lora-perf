@@ -17,7 +17,7 @@ This file only records the GB300 deltas.
 |---|---|---|
 | pod.yaml | `runtimeClassName: nvidia-legacy`, privileged, hostPath on `/mnt/nvme-b` (big dedicated raid) | no runtimeClass, no privileged, hostPath on **`/mnt/stateful_partition`** (the node's 95G persistent NVMe partition): `/root/.cache` (JIT — kills the >30-min cold sm_103 build on relaunches) + `/data` (weights — no re-download/relay per pod). Wiped only on node re-image. **Disk budget is tight:** model 40G + adapter 2.4G + JIT cache on a 95G partition — don't park other large artifacts there. |
 | MODEL_PATH / LORA_PATH | `/data/...` | `/data/...` (same paths now) |
-| pod name | `sglang-qwen35-<ID>` | `sglang-gb300-qwen3vl-yushengsu-<ID>` (ID = `$(date +%Y%m%d-%H%M%S)` per the cluster workload-naming convention) |
+| pod name | `sglang-qwen35-<ID>` | `sglang-gb300-qwen35-yushengsu-<ID>` (ID = `$(date +%Y%m%d-%H%M%S)` per the cluster workload-naming convention) |
 | serving config | identical (PR #27329 launch: tp4/ep4, graph-max-bs 128, experimental_sgl_trtllm variant cell) | identical |
 | scheduling | — | needs the `radixark.io/cohort=true:NoSchedule` toleration (free nodes carry it); keep requests small (busy cluster) |
 

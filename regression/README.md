@@ -105,7 +105,7 @@ mkdir -p "$RUN_ROOT"
 
 ```bash
 sed "s/\${ID}/${ID}/g" "$REG/$PLAT/models/$MODEL/pod.yaml" | kubectl apply -f -
-kubectl wait --for=condition=Ready pod/sglang-gb300-qwen3vl-yushengsu-${ID} --timeout=20m
+kubectl wait --for=condition=Ready pod/sglang-gb300-qwen35-yushengsu-${ID} --timeout=20m
 # kimi on gb300 (2 pods + ComputeDomain):
 #   kubectl wait --for=condition=Ready pod/sglang-gb300-kimi-yushengsu-${ID}-0 \
 #                                      pod/sglang-gb300-kimi-yushengsu-${ID}-1 --timeout=25m
@@ -114,13 +114,13 @@ kubectl wait --for=condition=Ready pod/sglang-gb300-qwen3vl-yushengsu-${ID} --ti
 | | |
 |---|---|
 | **Input** | `pod.yaml` template + `$ID` |
-| **Output** | a Ready pod `sglang-gb300-qwen3vl-yushengsu-<ID>` with `/data` (weights, persists per-node) and `/root/.cache` (JIT cache) mounted from the node's `/mnt/stateful_partition` |
+| **Output** | a Ready pod `sglang-gb300-qwen35-yushengsu-<ID>` with `/data` (weights, persists per-node) and `/root/.cache` (JIT cache) mounted from the node's `/mnt/stateful_partition` |
 | **If Pending** | busy cluster / requests too big — see SKILL.md "Right-size requests"; GB300 nodes need the `radixark.io/cohort` toleration (already in pod.yaml) |
 
 ### Step 2 — Wait for in-pod setup (HF download + editable install)
 
 ```bash
-P=sglang-gb300-qwen3vl-yushengsu-${ID}
+P=sglang-gb300-qwen35-yushengsu-${ID}
 kubectl exec "$P" -- bash -lc \
   'for i in $(seq 1 600); do [ -f /root/.setup-done ] && { echo DONE; exit 0; }; sleep 10; done;
    echo TIMEOUT; tail -80 /root/setup.log; exit 1'
