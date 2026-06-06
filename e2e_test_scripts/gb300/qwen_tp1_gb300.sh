@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GB300 port of ../qwen_tp1_v2.sh (single-GPU tp1: PR sgl-lora vs oss-main no-LoRA baseline).
+# GB300 port of ../gb200/qwen_tp1_v2.sh (single-GPU tp1: PR sgl-lora vs oss-main no-LoRA baseline).
 # Deltas vs GB200: READY wait 150x10s->270x10s (45 min, cold sm_103 JIT headroom),
 # PR backend parameterized (PRBACKEND), flashinfer pin guard (see qwen_run_gb300.sh header).
 # Usage: qwen_tp1_gb300.sh <REF=full-lora-opti|main-base> <TAG>   (GPU0, tp1)
@@ -8,8 +8,8 @@ PRBACKEND=${PRBACKEND:-experimental_sgl_trtllm}
 FLASHINFER_PIN=${FLASHINFER_PIN:-0.6.11.post1}
 pkill -9 -f "[s]glang.launch_server" 2>/dev/null; fuser -k $PORT/tcp 30000/tcp 2>/dev/null; sleep 5; : >/tmp/srv_tp1.log
 # NEVER add SGLANG_OPT_LORA_DOWN_FINALIZE_OVERLAP or SGLANG_OPT_LORA_ENABLE_PDL (corrupts base).
-if [ "$REF" = main-base ]; then URL=https://github.com/sgl-project/sglang; BR=main; BFLAG=""; LF=""; OPT=""; LMODE=0
-else URL=https://github.com/jybsuper/sglang; BR=full-lora-opti; BFLAG="--moe-runner-backend $PRBACKEND"; LF="--enable-lora --max-loras-per-batch 1 --max-lora-rank 16 --lora-backend triton --lora-use-virtual-experts --lora-paths alpha=$LORAP"; OPT="SGLANG_EXPERIMENTAL_LORA_OPTI=1 SGLANG_OPT_LORA_OVERLAP_MAIN_ALLOC=1 SGLANG_OPT_LORA_SHARED_ADD_OVERLAP=1 SGLANG_OPT_LORA_CUBLAS=1"; LMODE=1; fi
+if [ "$REF" = main-base ]; then URL=https://github.com/yushengsu-thu/sglang; BR=trtllm-lora-bf16; BFLAG=""; LF=""; OPT=""; LMODE=0
+else URL=https://github.com/yushengsu-thu/sglang; BR=trtllm-lora-bf16; BFLAG="--moe-runner-backend $PRBACKEND"; LF="--enable-lora --max-loras-per-batch 1 --max-lora-rank 16 --lora-backend triton --lora-use-virtual-experts --lora-paths alpha=$LORAP"; OPT="SGLANG_EXPERIMENTAL_LORA_OPTI=1 SGLANG_OPT_LORA_OVERLAP_MAIN_ALLOC=1 SGLANG_OPT_LORA_SHARED_ADD_OVERLAP=1 SGLANG_OPT_LORA_CUBLAS=1"; LMODE=1; fi
 git fetch $URL $BR >/tmp/gf.log 2>&1 && git checkout -f FETCH_HEAD >/tmp/co.log 2>&1
 [ "${REINSTALL:-0}" = 1 ] && { echo "[$TAG] pip install -e python"; pip install -q -e python >/tmp/pip.log 2>&1; }
 FIV=$(python3 -c 'import flashinfer; print(flashinfer.__version__)' 2>/dev/null)

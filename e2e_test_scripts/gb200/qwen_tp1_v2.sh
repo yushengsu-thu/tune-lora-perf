@@ -3,8 +3,8 @@
 # Usage: qwen_tp1_v2.sh <REF=full-lora-opti|main-base> <TAG>   (GPU0, tp1)
 REF=$1; TAG=$2; PORT=30001; MODEL=/data/Qwen3.5-35B-A3B-FP8; LORAP=/data/qwen35_35b_lora_alpha; H=/tmp/flo_helpers; cd /root/sglang
 pkill -9 -f "[s]glang.launch_server" 2>/dev/null; fuser -k $PORT/tcp 30000/tcp 2>/dev/null; sleep 5; : >/tmp/srv_tp1.log
-if [ "$REF" = main-base ]; then URL=https://github.com/sgl-project/sglang; BR=main; BFLAG=""; LF=""; OPT=""; LMODE=0
-else URL=https://github.com/jybsuper/sglang; BR=full-lora-opti; BFLAG="--moe-runner-backend sgl_flashinfer_trtllm"; LF="--enable-lora --max-loras-per-batch 1 --max-lora-rank 16 --lora-backend triton --lora-use-virtual-experts --lora-paths alpha=$LORAP"; OPT="SGLANG_EXPERIMENTAL_LORA_OPTI=1 SGLANG_OPT_LORA_OVERLAP_MAIN_ALLOC=1 SGLANG_OPT_LORA_SHARED_ADD_OVERLAP=1 SGLANG_OPT_LORA_CUBLAS=1"; LMODE=1; fi
+if [ "$REF" = main-base ]; then URL=https://github.com/yushengsu-thu/sglang; BR=trtllm-lora-bf16; BFLAG=""; LF=""; OPT=""; LMODE=0
+else URL=https://github.com/yushengsu-thu/sglang; BR=trtllm-lora-bf16; BFLAG="--moe-runner-backend sgl_flashinfer_trtllm"; LF="--enable-lora --max-loras-per-batch 1 --max-lora-rank 16 --lora-backend triton --lora-use-virtual-experts --lora-paths alpha=$LORAP"; OPT="SGLANG_EXPERIMENTAL_LORA_OPTI=1 SGLANG_OPT_LORA_OVERLAP_MAIN_ALLOC=1 SGLANG_OPT_LORA_SHARED_ADD_OVERLAP=1 SGLANG_OPT_LORA_CUBLAS=1"; LMODE=1; fi
 git fetch $URL $BR >/tmp/gf.log 2>&1 && git checkout -f FETCH_HEAD >/tmp/co.log 2>&1
 echo "[$TAG] HEAD=$(git rev-parse --short HEAD) tp1 REF=$REF backend=${BFLAG:-default} lora=$LMODE"
 setsid env CUDA_VISIBLE_DEVICES=0 $OPT PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python3 -m sglang.launch_server --model-path $MODEL --tp 1 --host 0.0.0.0 --port $PORT --cuda-graph-max-bs 64 --mem-fraction-static 0.8 --trust-remote-code --max-prefill-tokens 65536 --chunked-prefill-size 65536 --mamba-scheduler-strategy extra_buffer --attention-backend trtllm_mha $BFLAG $LF </dev/null >/tmp/srv_tp1.log 2>&1 &

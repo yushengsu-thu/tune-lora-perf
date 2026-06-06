@@ -23,8 +23,8 @@ spec:
       log(){ echo "[setup $(date -u +%H:%M:%S)] $*"; }
       command -v numactl >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq numactl; } || true
       pip install --quiet "huggingface_hub[hf_xet,hf_transfer]" hf_xet hf_transfer || true
-      if [ -d /root/sglang/.git ]; then cd /root/sglang; else rm -rf /root/sglang; git clone https://github.com/sgl-project/sglang /root/sglang; cd /root/sglang; fi
-      log "checkout full-lora-opti (PR)"; git fetch https://github.com/jybsuper/sglang full-lora-opti && git checkout -f FETCH_HEAD
+      if [ -d /root/sglang/.git ]; then cd /root/sglang; else rm -rf /root/sglang; git clone https://github.com/yushengsu-thu/sglang /root/sglang; cd /root/sglang; fi
+      log "checkout full-lora-opti (PR)"; git fetch https://github.com/yushengsu-thu/sglang trtllm-lora-bf16 && git checkout -f FETCH_HEAD
       log "pip install -e python"; pip install -e python || true
       mkdir -p /data/Qwen3.5-35B-A3B-FP8 /data/qwen35_35b_lora_alpha
       ( flock 9
@@ -75,7 +75,7 @@ spec:
       log(){ echo "[setup $(date -u +%H:%M:%S)] $*"; }
       command -v numactl >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq numactl; } || true
       pip install --quiet "huggingface_hub[hf_xet,hf_transfer]" hf_xet hf_transfer || true
-      if [ -d /root/sglang/.git ]; then cd /root/sglang; else rm -rf /root/sglang; git clone https://github.com/sgl-project/sglang /root/sglang; cd /root/sglang; fi
+      if [ -d /root/sglang/.git ]; then cd /root/sglang; else rm -rf /root/sglang; git clone https://github.com/yushengsu-thu/sglang /root/sglang; cd /root/sglang; fi
       log "reset to origin/main (oss)"; git fetch origin main && git reset --hard origin/main
       log "pip install -e python"; pip install -e python || true
       mkdir -p /data/Qwen3.5-35B-A3B-FP8 /data/qwen35_35b_lora_alpha

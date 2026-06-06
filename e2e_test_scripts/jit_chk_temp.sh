@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Validate the renamed JIT csrc (trtllm_lora_temp) still compiles.
 cd /root/sglang
-git fetch https://github.com/jybsuper/sglang wip-full-lora-opti >/tmp/gf.log 2>&1 && git checkout -f FETCH_HEAD >/tmp/co.log 2>&1
+git fetch https://github.com/yushengsu-thu/sglang trtllm-lora-bf16 >/tmp/gf.log 2>&1 && git checkout -f FETCH_HEAD >/tmp/co.log 2>&1
 echo "JIT HEAD=$(git rev-parse --short HEAD)"
 SGLANG_EXPERIMENTAL_LORA_OPTI=1 python3 -c "
 import torch

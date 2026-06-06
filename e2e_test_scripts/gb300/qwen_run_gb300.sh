@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GB300 (sm_103, gcp-radixark-02) port of ../qwen_run.sh. Deltas vs GB200:
+# GB300 (sm_103, gcp-radixark-02) port of ../gb200/qwen_run.sh. Deltas vs GB200:
 #   1. READY wait 175->225 iters (45 min): the FIRST sm_103 trtllm_lora_temp JIT cold-compile
 #      exceeded 30 min on the 2026-06-06 regression validation (warm cache relaunch ~8 min).
 #   2. SGLANG_OPT_LORA_DOWN_FINALIZE_OVERLAP DROPPED from the PR opt set — the runbook/MODEL.md
@@ -14,7 +14,7 @@
 REF=$1; TAG=$2; PORT=30000; MODEL=/data/Qwen3.5-35B-A3B-FP8; LORAP=/data/qwen35_35b_lora_alpha; H=/tmp/flo_helpers; cd /root/sglang
 PRBACKEND=${PRBACKEND:-experimental_sgl_trtllm}
 FLASHINFER_PIN=${FLASHINFER_PIN:-0.6.11.post1}
-if [ "$REF" = main ]; then URL=https://github.com/sgl-project/sglang; BR=main; else URL=https://github.com/jybsuper/sglang; BR=full-lora-opti; fi
+if [ "$REF" = main ]; then URL=https://github.com/yushengsu-thu/sglang; BR=trtllm-lora-bf16; else URL=https://github.com/yushengsu-thu/sglang; BR=trtllm-lora-bf16; fi
 pkill -9 -f "[s]glang.launch_server" 2>/dev/null; pkill -9 -f "[p]ython3 -m sglang" 2>/dev/null; fuser -k $PORT/tcp 2>/dev/null; sleep 5
 git fetch $URL $BR >/tmp/gf.log 2>&1 && git checkout -f FETCH_HEAD >/tmp/co.log 2>&1
 [ "${REINSTALL:-0}" = 1 ] && { echo "[$TAG] pip install -e python"; pip install -q -e python >/tmp/pip.log 2>&1; }

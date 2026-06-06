@@ -79,12 +79,12 @@ spec:
       if [ -f "$HOME/.cargo/env" ]; then grep -q 'cargo/env' ~/.bashrc 2>/dev/null || echo '. "$HOME/.cargo/env"' >> ~/.bashrc; . "$HOME/.cargo/env"; fi
       if [ -d /root/sglang/.git ]; then
         log "updating /root/sglang -> origin/main"; cd /root/sglang
-        git remote set-url origin https://github.com/sgl-project/sglang.git 2>/dev/null || true
+        git remote set-url origin https://github.com/yushengsu-thu/sglang.git 2>/dev/null || true
         # Pinned baseline: the PR #27329 merge commit on sgl-project main (deterministic setup;
         # the driver checks out the injected __bench_* refs per cell anyway).
         git fetch origin c9f582a272dcc7109bf7da584867f47995602035 && git reset --hard c9f582a272dcc7109bf7da584867f47995602035
       else
-        log "cloning sglang"; rm -rf /root/sglang && git clone https://github.com/sgl-project/sglang /root/sglang; cd /root/sglang
+        log "cloning sglang"; rm -rf /root/sglang && git clone https://github.com/yushengsu-thu/sglang /root/sglang; cd /root/sglang
       fi
       log "pip install -e /root/sglang/python (a few minutes)"; cd /root/sglang && pip install -e python
       # NVFP4 base must come from a real directory (NOT the HF-cache symlink layout).
@@ -197,12 +197,12 @@ spec:
       pip install --quiet "huggingface_hub[hf_xet,hf_transfer]" hf_xet hf_transfer || true
       if [ -f "$HOME/.cargo/env" ]; then grep -q 'cargo/env' ~/.bashrc 2>/dev/null || echo '. "$HOME/.cargo/env"' >> ~/.bashrc; . "$HOME/.cargo/env"; fi
       if [ -d /root/sglang/.git ]; then
-        cd /root/sglang; git remote set-url origin https://github.com/sgl-project/sglang.git 2>/dev/null || true
+        cd /root/sglang; git remote set-url origin https://github.com/yushengsu-thu/sglang.git 2>/dev/null || true
         # Pinned baseline: the PR #27329 merge commit on sgl-project main (deterministic setup;
         # the driver checks out the injected __bench_* refs per cell anyway).
         git fetch origin c9f582a272dcc7109bf7da584867f47995602035 && git reset --hard c9f582a272dcc7109bf7da584867f47995602035
       else
-        rm -rf /root/sglang && git clone https://github.com/sgl-project/sglang /root/sglang; cd /root/sglang
+        rm -rf /root/sglang && git clone https://github.com/yushengsu-thu/sglang /root/sglang; cd /root/sglang
       fi
       cd /root/sglang && pip install -e python
       mkdir -p /root/Kimi-K2.5-NVFP4 /root/kimi_k25_lora_alpha

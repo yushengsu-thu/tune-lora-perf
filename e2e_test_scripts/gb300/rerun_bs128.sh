@@ -3,7 +3,7 @@
 # xcheck>5% rule. Relaunches the PR sgl-lora server (warm JIT) and benches base bs128 twice.
 TAG=$1; PORT=30000; MODEL=/data/Qwen3.5-35B-A3B-FP8; LORAP=/data/qwen35_35b_lora_alpha; H=/tmp/flo_helpers; cd /root/sglang
 pkill -9 -f "[s]glang.launch_server" 2>/dev/null; fuser -k $PORT/tcp 2>/dev/null; sleep 5; : >/tmp/srv.log
-git fetch https://github.com/jybsuper/sglang full-lora-opti >/tmp/gf.log 2>&1 && git checkout -f FETCH_HEAD >/tmp/co.log 2>&1
+git fetch https://github.com/yushengsu-thu/sglang trtllm-lora-bf16 >/tmp/gf.log 2>&1 && git checkout -f FETCH_HEAD >/tmp/co.log 2>&1
 echo "[$TAG] HEAD=$(git rev-parse --short HEAD) rerun sgl-lora/base bs128"
 OPT="SGLANG_EXPERIMENTAL_LORA_OPTI=1 SGLANG_OPT_LORA_OVERLAP_MAIN_ALLOC=1 SGLANG_OPT_LORA_SHARED_ADD_OVERLAP=1 SGLANG_OPT_LORA_CUBLAS=1"
 LF="--enable-lora --max-loras-per-batch 1 --max-lora-rank 16 --lora-backend triton --lora-use-virtual-experts --lora-paths alpha=$LORAP"

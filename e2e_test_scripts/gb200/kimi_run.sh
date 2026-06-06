@@ -6,7 +6,7 @@ ROLE=$1; REF=$2; LORA=$3; BACKEND=$4; DISTADDR=$5; TAG=$6; TESTS=${7:-full}
 PORT=30000; MODEL=/root/Kimi-K2.5-NVFP4; LORAP=/root/kimi_k25_lora_alpha; H=/tmp/flo_helpers; cd /root/sglang
 pkill -9 -f "[s]glang.launch_server" 2>/dev/null; pkill -9 -f "[s]glang::" 2>/dev/null; pkill -9 -f "[p]ython3 -m sglang" 2>/dev/null
 fuser -k 20000/tcp ${PORT}/tcp 2>/dev/null; sleep 6; : >/tmp/srv.log
-if [ "$REF" = main ]; then URL=https://github.com/sgl-project/sglang; BR=main; else URL=https://github.com/jybsuper/sglang; BR=full-lora-opti; fi
+if [ "$REF" = main ]; then URL=https://github.com/yushengsu-thu/sglang; BR=trtllm-lora-bf16; else URL=https://github.com/yushengsu-thu/sglang; BR=trtllm-lora-bf16; fi
 git fetch $URL $BR >/tmp/gf.log 2>&1 && git checkout -f FETCH_HEAD >/tmp/co.log 2>&1
 echo "[$TAG] $ROLE HEAD=$(git rev-parse --short HEAD) LORA=$LORA backend=$BACKEND"
 OPT=""; [ "$REF" = full-lora-opti ] && OPT="SGLANG_EXPERIMENTAL_LORA_OPTI=1 SGLANG_FLASHINFER_NVFP4_PER_TOKEN_ACTIVATION=1 SGLANG_OPT_USE_JIT_KERNEL_KIMI_GATE=1 SGLANG_OPT_USE_JIT_KERNEL_MOE_ALIGN=1 SGLANG_OPT_FUSED_PERMUTE_QUANT=1 SGLANG_OPT_FUSED_MOE_ACTIVATION_QUANT_FUSE=1"

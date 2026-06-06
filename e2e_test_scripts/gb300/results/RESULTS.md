@@ -39,7 +39,9 @@ truncation issues, COHERENT. xcheck ≤1.3% on all 16 points.
 ### ⚠️ Kimi NVFP4+LoRA crashes on this commit — 4-bug chain (REPORT TO jybsuper)
 
 The kimi NVFP4+LoRA combination is broken at `ac51ef5ed` (untested post-rebase). The
-LoRA numbers above were obtained WITH the hotfix in `kimi_nvfp4_lora_hotfix.patch`:
+LoRA numbers above were obtained WITH a working-tree hotfix (the patch file was REMOVED
+from this repo 2026-06-06 — possibly incorrect: it silently SKIPS the LoRA delta on
+quantized-tuple layers, so those layers ran base-only; do not reuse it). The bug chain:
 
 1. fused `nvfp4_gemm_swiglu` path (deepseek_v2.py) reads modelopt quant attrs
    (`input_scale_inv`, `alpha`, `weight_*_interleaved`, …) directly off the LoRA-wrapped

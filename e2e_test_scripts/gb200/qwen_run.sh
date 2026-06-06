@@ -2,7 +2,7 @@
 # Self-contained QWEN runner (single-pod TP4/EP4, runs all configs sequentially). Usage:
 #   qwen_run.sh <REF=full-lora-opti|main> <TAG>
 REF=$1; TAG=$2; PORT=30000; MODEL=/data/Qwen3.5-35B-A3B-FP8; LORAP=/data/qwen35_35b_lora_alpha; H=/tmp/flo_helpers; cd /root/sglang
-if [ "$REF" = main ]; then URL=https://github.com/sgl-project/sglang; BR=main; else URL=https://github.com/jybsuper/sglang; BR=full-lora-opti; fi
+if [ "$REF" = main ]; then URL=https://github.com/yushengsu-thu/sglang; BR=trtllm-lora-bf16; else URL=https://github.com/yushengsu-thu/sglang; BR=trtllm-lora-bf16; fi
 pkill -9 -f "[s]glang.launch_server" 2>/dev/null; pkill -9 -f "[p]ython3 -m sglang" 2>/dev/null; fuser -k $PORT/tcp 2>/dev/null; sleep 5
 git fetch $URL $BR >/tmp/gf.log 2>&1 && git checkout -f FETCH_HEAD >/tmp/co.log 2>&1
 echo "[$TAG] HEAD=$(git rev-parse --short HEAD)  REF=$REF"

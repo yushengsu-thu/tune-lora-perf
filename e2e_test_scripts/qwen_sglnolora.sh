@@ -3,7 +3,7 @@
 # (not the sgl-kernel path). Usage: qwen_sglnolora.sh <TAG>  (lorapr-0, TP4)
 TAG=$1; PORT=30000; MODEL=/data/Qwen3.5-35B-A3B-FP8; H=/tmp/flo_helpers; cd /root/sglang
 pkill -9 -f "[s]glang.launch_server" 2>/dev/null; fuser -k $PORT/tcp 2>/dev/null; sleep 5; : >/tmp/srv.log
-git fetch https://github.com/jybsuper/sglang full-lora-opti >/tmp/gf.log 2>&1 && git checkout -f FETCH_HEAD >/tmp/co.log 2>&1
+git fetch https://github.com/yushengsu-thu/sglang trtllm-lora-bf16 >/tmp/gf.log 2>&1 && git checkout -f FETCH_HEAD >/tmp/co.log 2>&1
 echo "[$TAG] HEAD=$(git rev-parse --short HEAD) sgl backend, EXPERIMENTAL_LORA_OPTI=1, NO --enable-lora"
 setsid env SGLANG_EXPERIMENTAL_LORA_OPTI=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True numactl --membind=0,1 python3 -m sglang.launch_server --model-path $MODEL --tp 4 --ep 4 --host 0.0.0.0 --port $PORT --cuda-graph-max-bs 128 --mem-fraction-static 0.8 --trust-remote-code --max-prefill-tokens 65536 --chunked-prefill-size 65536 --mamba-scheduler-strategy extra_buffer --enable-flashinfer-allreduce-fusion --attention-backend trtllm_mha --moe-runner-backend sgl_flashinfer_trtllm </dev/null >/tmp/srv.log 2>&1 &
 R=0; for i in $(seq 1 175); do curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null 2>&1 && { R=1; break; }; c=$(tr '\r' '\n' </tmp/srv.log|grep -acE "Traceback|Error|out of memory|Capture cuda graph failed"); [ "${c:-0}" -ge 1 ] && { R=2; break; }; sleep 12; done

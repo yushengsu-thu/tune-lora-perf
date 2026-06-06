@@ -1,9 +1,11 @@
 # GB300 port of the e2e test scripts (gcp-radixark-02)
 
 GB300 (sm_103, GKE `a4x-maxgpu-4g-metal` / `nvidia-gb300`, 18 nodes × 4 GPU, one NVL72
-fabric) port of `../` — see `../README.md` for the methodology and `../../E2E_FULL_TEST_RUNBOOK.md`
-for what-to-expect. **Helpers (`gsm8k_lora.py`, `bench_report.py`, `prompts_check.py`) are
-hardware-agnostic — deploy the ones from `../` unchanged.**
+fabric) port of the GB200 scripts in `../gb200/` (historical — that cluster is gone) —
+see `../README.md` for the shared files and `../../E2E_FULL_TEST_RUNBOOK.md` for the
+methodology. **Helpers (`gsm8k_lora.py`, `bench_report.py`, `prompts_check.py`) are
+hardware-agnostic — deploy the ones from `../` unchanged.** Validated end-to-end on
+2026-06-06; numbers + the kimi NVFP4+LoRA bug report in [`results/RESULTS.md`](results/RESULTS.md).
 
 Every step: `kubectl config use-context gcp-radixark-02` (or `--context gcp-radixark-02`).
 

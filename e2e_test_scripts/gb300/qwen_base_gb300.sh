@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# GB300 port of ../qwen_base.sh (oss-main no-LoRA ceiling, default backend = %-denominator).
+# GB300 port of ../gb200/qwen_base.sh (oss-main no-LoRA ceiling, default backend = %-denominator).
 # Deltas vs GB200: READY wait 175->225 iters (45 min, cold sm_103 JIT headroom) +
 # flashinfer pin guard (see qwen_run_gb300.sh header).
 # Usage: qwen_base_gb300.sh <TAG>

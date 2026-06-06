@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 cd /root/sglang
-git fetch https://github.com/jybsuper/sglang wip-full-lora-opti >/tmp/gf.log 2>&1 && git checkout -f FETCH_HEAD >/tmp/co.log 2>&1
+git fetch https://github.com/yushengsu-thu/sglang trtllm-lora-bf16 >/tmp/gf.log 2>&1 && git checkout -f FETCH_HEAD >/tmp/co.log 2>&1
 echo "HEAD=$(git rev-parse --short HEAD)"
 echo "=== OFF: forward_mla imports; experimental pkg must NOT load ==="
 SGLANG_EXPERIMENTAL_LORA_OPTI=0 python3 -c "
