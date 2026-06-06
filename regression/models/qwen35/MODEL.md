@@ -80,8 +80,11 @@ under cuda-graph — base gsm8k 0.81→0.37; removed) or `SGLANG_OPT_LORA_ENABLE
 
 **Model-standard server args (BOTH cells, from the PR's qwen launch; in `model.env`):**
 `--tp 4 --ep 4 --cuda-graph-max-bs 128 --mem-fraction-static 0.8 --max-prefill-tokens 65536
---chunked-prefill-size 65536 --mamba-scheduler-strategy extra_buffer
+--chunked-prefill-size 4096 --mamba-scheduler-strategy extra_buffer
 --enable-flashinfer-allreduce-fusion --attention-backend trtllm_mha`
+(⚠ chunked-prefill deviates from the PR launch's 65536: the teacher-forced full-logprob acc
+OOMs at 65536 — a 65536-token chunk's logits all_gather needs ~15 GiB. 4096 is the validated
+value; ceiling throughput matches the PR within noise.)
 
 **The `alpha` adapter:** same caveats as kimi (see `../kimi/MODEL.md`) — training intent not
 confirmed; report observed outputs, don't over-claim. Routing: `/generate lora_path="alpha"`, or
