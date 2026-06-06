@@ -7,7 +7,8 @@ This file only records the GB300 deltas.
 ## Target cluster
 
 - kubectl context **`gcp-radixark-02`** (GKE) — 25× `a4x-maxgpu-4g-metal` nodes,
-  `nvidia-gb300`, 4 GPU each. (GB200 runs live on the `leira` context instead.)
+  `nvidia-gb300`, 4 GPU each. (GB200 ran on the `leira` context — that cluster is GONE;
+  never point a gb300 run at it.)
 - Run every step with `kubectl config use-context gcp-radixark-02` (or `--context`).
 
 ## Deltas vs the GB200/leira pack
@@ -23,11 +24,13 @@ This file only records the GB300 deltas.
 ## GB300-specific notes
 
 - The `hf-token-yanbin` secret must exist on the cluster for the private LoRA download
-  (copy it from leira: read the token there, `kubectl --context gcp-radixark-02 create secret
-  generic hf-token-yanbin --from-literal=token=...`). **Without it**: the base model still
-  downloads (public) and setup completes; relay the adapter ONCE per node from a leira pod
-  (20MB verified chunks — plain `kubectl cp`/`exec | tar` streams TRUNCATE multi-GB files) into
+  (`kubectl --context gcp-radixark-02 create secret generic hf-token-yanbin
+  --from-literal=token=<HF token with access to the private adapter repos>`).
+  **Without it**: the base model still downloads (public) and setup completes; relay the
+  adapter ONCE per node from any machine that has it (20MB verified chunks — plain
+  `kubectl cp`/`exec | tar` streams TRUNCATE multi-GB files) into
   `/data/qwen35_35b_lora_alpha/`; it persists on the node afterwards.
+  (Do NOT use the gb200/leira cluster for any of this — it is gone.)
 - First-ever run on a node pays ~40 GB model download + the full cold JIT; **subsequent pods on
   the same node reuse both** via the `/mnt/stateful_partition` hostPath mounts.
 - sm_103 kernel support depends on the image/flashinfer build — if a cell crashes during JIT

@@ -184,9 +184,9 @@ kubectl exec <pod> -- python3 /tmp/prompts_check.py --lora alpha --model <model-
 ## 0. Prep (local, once)
 
 ```bash
-kubectl config use-context leira
+kubectl config use-context gcp-radixark-02   # gb300. gb200 used `leira` — that cluster is GONE
 export ID=<dns-safe-id>                       # ASK the user if not given
-PLAT=gb200; MODEL=kimi                        # or gb200/qwen35, gb300/models/qwen35
+PLAT=gb300; MODEL=qwen35                      # or gb300/kimi; gb200 packs are historical (leira gone)
 export RUN_ROOT="$HOME/Downloads/sglang_${MODEL}_reg_${ID}_$(date +%Y%m%d_%H%M%S)"; mkdir -p "$RUN_ROOT"
 REG=<path-to>/regression                      # repo checkout or ~/.claude/skills/regression
 ```

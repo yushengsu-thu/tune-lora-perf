@@ -85,7 +85,7 @@ steps. **Read `gb300/models/qwen35/MODEL.md` before editing anything.**
 ### Step 0 — Prep (local shell, once)
 
 ```bash
-kubectl config use-context gcp-radixark-02         # GB200 would be: leira
+kubectl config use-context gcp-radixark-02         # gb300 ONLY uses this context (gb200's leira cluster is gone)
 
 export ID=$(date +%Y%m%d-%H%M%S)                   # GB300 workload-naming convention
                                                    # (on GB200 any short dns-safe id, e.g. "yb")
@@ -99,7 +99,7 @@ mkdir -p "$RUN_ROOT"
 |---|---|
 | **Input** | nothing — just picks identifiers |
 | **Output** | `ID` (embedded in every k8s object name), `RUN_ROOT` (the local folder ALL results land in) |
-| **Note** | export `ID`/`RUN_ROOT` in the same shell you run every later step from. The `hf-token-yanbin` secret must exist in-cluster (private LoRA repo) — see MODEL.md for how to copy it from leira. |
+| **Note** | export `ID`/`RUN_ROOT` in the same shell you run every later step from. The `hf-token-yanbin` secret must exist in-cluster (private LoRA repo) — see MODEL.md for how to create it. |
 
 ### Step 1 — Launch the node/pod
 
