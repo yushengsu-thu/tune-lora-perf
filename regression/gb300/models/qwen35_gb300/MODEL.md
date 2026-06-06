@@ -1,6 +1,6 @@
 # Qwen3.5-35B-A3B-FP8 on GB300 — model knowledge
 
-**GB300 (sm_103, Blackwell Ultra) port of the [`qwen35`](../qwen35/MODEL.md) pack** — read that
+**GB300 (sm_103, Blackwell Ultra) port of the [`qwen35`](../../../gb200/models/qwen35/MODEL.md) pack** — read that
 file for the full env matrix, robustness items, and adapter caveats; everything there applies.
 This file only records the GB300 deltas.
 

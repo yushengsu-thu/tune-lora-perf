@@ -13,22 +13,19 @@ cells run this exact commit (base = no-LoRA stock backend, variant = the fast pa
 1. **General skill**: [`skill.md`](skill.md)
 2. **Kernel fusion skill**: [`skill_kernel_fusion.md`](skill_kernel_fusion.md) — used at the final stage for tuning/optimizing fusion kernels (kernel fusion / kernel optimization)
 3. **Regression (acc + bench + prompts + profile, base vs variant)** — [`regression/`](regression):
-   one generic driver + per-model parameter packs (formerly `kimi-regression/` + `qwen35_35b-regression/`).
-   Entry points: [`run_kimi.sh`](regression/run_kimi.sh) (Kimi-K2.5-NVFP4, 2-node MNNVL, tp8/ep8),
-   [`run_qwen35.sh`](regression/run_qwen35.sh) (Qwen3.5-35B-A3B-FP8, single GB200 node, tp4/ep4), and
-   [`run_qwen35_gb300.sh`](regression/run_qwen35_gb300.sh) (same model on a GB300/sm_103 node, `gcp-radixark-02`).
-   Adding a model = a new `models/<m>/` pack + a `run_<m>.sh` wrapper — zero edits to `scripts/`.
+   one generic driver + per-platform model packs (formerly `kimi-regression/` + `qwen35_35b-regression/`).
+   Entry points: [`gb200/run_kimi.sh`](regression/gb200/run_kimi.sh) (Kimi-K2.5-NVFP4, 2-node MNNVL, tp8/ep8),
+   [`gb200/run_qwen35.sh`](regression/gb200/run_qwen35.sh) (Qwen3.5-35B-A3B-FP8, 1 GB200 node, tp4/ep4), and
+   [`gb300/run_qwen35_gb300.sh`](regression/gb300/run_qwen35_gb300.sh) (same model on a GB300/sm_103 node).
+   Adding a model = a new `<platform>/models/<m>/` pack + a `run_<m>.sh` wrapper — zero edits to `scripts/`.
    **Validated end-to-end on both GB200 and GB300 (2026-06-06)** — see the validation-status note in
    [`regression/SKILL.md`](regression/SKILL.md).
 
    ```
    regression/
    ├── SKILL.md                           # shared operating manual (generic workflow + common robustness)
-   ├── run_kimi.sh                        # entry point 1: Kimi regression (GB200 2-node, leira)
-   ├── run_qwen35.sh                      # entry point 2: Qwen3.5 regression (GB200 1-node, leira)
-   ├── run_qwen35_gb300.sh                # entry point 3: Qwen3.5 regression (GB300 1-node, gcp-radixark-02)
    │
-   ├── scripts/                           # ── generic layer: no model-specific strings ──
+   ├── scripts/                           # ── generic layer, shared by all platforms ──
    │   ├── run_regression.sh              # main driver engine (DRY_RUN=1 previews launch commands)
    │   ├── prompts_check.py               # per-endpoint health check (the decode gate)
    │   ├── profile_metrics.py             # trace → forward-pass / per-layer time
@@ -37,39 +34,39 @@ cells run this exact commit (base = no-LoRA stock backend, variant = the fast pa
    │   ├── build_readme.py                # per-run README generator for publishing
    │   └── publish.sh                     # GitHub publish (small files → commit, traces → Release)
    │
-   └── models/                            # ── per-model layer: four-piece packs ──
-       ├── kimi/
-       │   ├── model.env                  # parameters (values): topology/paths/flags/profile recipe/tolerances
-       │   ├── pod.yaml                   # K8s env (2 pods + Service + ComputeDomain, MNNVL)
-       │   ├── hooks.sh                   # model logic (drop_caches, flashinfer re-pin)
-       │   └── MODEL.md                   # model knowledge (env matrix, expected numbers, model-specific robustness)
-       ├── qwen35/
-       │   ├── model.env                  # (single pod, tp4/ep4, FP8 parameters)
-       │   ├── pod.yaml                   # (single pod + /data hostPath, GB200/leira)
-       │   ├── hooks.sh                   # (record_layers, flashinfer re-pin)
-       │   └── MODEL.md
-       └── qwen35_gb300/                  # GB300 (sm_103) port — same serving config, GKE-adapted pod
-           ├── model.env                  # (paths on ephemeral /root, cohort toleration, 45-min JIT timeout)
-           ├── pod.yaml                   # (no runtimeClass/hostPath; gcp-radixark-02 conventions)
-           ├── hooks.sh                   # (record_layers, flashinfer re-pin)
-           └── MODEL.md                   # (GB300 deltas + measured numbers)
+   ├── gb200/                             # ── GB200 platform (leira cluster) ──
+   │   ├── run_kimi.sh                    # entry point: Kimi regression (2-node MNNVL)
+   │   ├── run_qwen35.sh                  # entry point: Qwen3.5 regression (1 node)
+   │   └── models/
+   │       ├── kimi/                      # model.env + pod.yaml + hooks.sh + MODEL.md
+   │       └── qwen35/                    # (single pod + /mnt/nvme-b hostPath)
+   │
+   └── gb300/                             # ── GB300 platform (gcp-radixark-02 cluster, sm_103) ──
+       ├── run_qwen35_gb300.sh            # entry point: Qwen3.5 regression (1 node)
+       └── models/
+           └── qwen35_gb300/              # GKE-adapted pod (stateful-partition mounts, cohort
+               │                          #   toleration, 45-min cold-JIT timeout)
+               └── broadcast_jit_cache.sh # fan a built JIT cache out to all GB300 nodes
    ```
+   Each model pack = four pieces: `model.env` (values), `pod.yaml` (K8s env), `hooks.sh` (logic:
+   drop_caches / record_layers / flashinfer re-pin), `MODEL.md` (knowledge: env matrix, expected
+   numbers, model-specific robustness).
 
    ### Manual run — the exact commands, step by step
 
-   Replace `MODEL` with `kimi`, `qwen35`, or `qwen35_gb300`. Full details per step: `regression/SKILL.md` §0–§6;
-   model-specific envs/numbers: `regression/models/<MODEL>/MODEL.md`.
+   Replace `PLAT/MODEL` with `gb200/kimi`, `gb200/qwen35`, or `gb300/qwen35_gb300`. Full details per step:
+   `regression/SKILL.md` §0–§6; model-specific envs/numbers: `regression/<PLAT>/models/<MODEL>/MODEL.md`.
 
    ```bash
    ## 0. prep (once per run)
    kubectl config use-context leira              # qwen35_gb300: gcp-radixark-02
    export ID=<your-dns-safe-id>                  # e.g. yb — namespaces the pods so parallel runs don't collide
-   MODEL=qwen35                                  # or kimi / qwen35_gb300
+   PLAT=gb200; MODEL=qwen35                      # or gb200/kimi, gb300/qwen35_gb300
    export RUN_ROOT="$HOME/Downloads/sglang_${MODEL}_reg_${ID}_$(date +%Y%m%d_%H%M%S)"; mkdir -p "$RUN_ROOT/$MODEL"
    REG=<path-to-this-repo>/regression
 
    ## 1. bring up the pod(s) and wait for Ready
-   sed "s/\${ID}/${ID}/g" "$REG/models/$MODEL/pod.yaml" | kubectl apply -f -
+   sed "s/\${ID}/${ID}/g" "$REG/$PLAT/models/$MODEL/pod.yaml" | kubectl apply -f -
    kubectl wait --for=condition=Ready pod/sglang-qwen35-${ID} --timeout=20m
    #   kimi (2 pods):  kubectl wait --for=condition=Ready pod/mnnvl-kimi-${ID}-0 pod/mnnvl-kimi-${ID}-1 --timeout=25m
    #   gb300:          kubectl wait --for=condition=Ready pod/sglang-gb300-qwen3vl-yushengsu-${ID} --timeout=20m   # ID=$(date +%Y%m%d-%H%M%S)
@@ -77,7 +74,7 @@ cells run this exact commit (base = no-LoRA stock backend, variant = the fast pa
    ## 2. wait for in-pod setup (sglang clone + pip install + weight downloads)
    kubectl exec <pod> -- bash -lc 'for i in $(seq 1 480); do [ -f /root/.setup-done ] && { echo DONE; exit 0; }; sleep 10; done; echo TIMEOUT; tail -40 /root/setup.log; exit 1'
    # (kimi: run this for BOTH pods. gb300: the private-LoRA download fails without the HF secret —
-   #  copy the adapter from a leira pod instead; see models/qwen35_gb300/MODEL.md.)
+   #  copy the adapter from a leira pod instead; see gb300/models/qwen35_gb300/MODEL.md.)
 
    ## 3. inject the base + variant commits (git bundles — exact commits, no stale-branch risk)
    REPO=<local sglang checkout>
@@ -96,12 +93,12 @@ cells run this exact commit (base = no-LoRA stock backend, variant = the fast pa
    done
 
    ## 4. (optional) preview the exact launch commands without touching the cluster
-   DRY_RUN=1 bash "$REG/run_${MODEL}.sh"
+   DRY_RUN=1 bash "$REG/$PLAT/run_${MODEL}.sh"
 
    ## 5. run the full regression (acc + bench + prompts + profile, base then variant; 1.5–2.5 h)
-   #    cells (LoRA on/off, flags, envs) are the BASE_*/VARIANT_* block in models/$MODEL/model.env —
+   #    cells (LoRA on/off, flags, envs) are the BASE_*/VARIANT_* block in $PLAT/models/$MODEL/model.env —
    #    edit there, or copy the file and point MODEL_ENV at the copy.
-   ID="$ID" RUN_ROOT="$RUN_ROOT" bash "$REG/run_${MODEL}.sh" > "$RUN_ROOT/run.out" 2>&1 &
+   ID="$ID" RUN_ROOT="$RUN_ROOT" bash "$REG/$PLAT/run_${MODEL}.sh" > "$RUN_ROOT/run.out" 2>&1 &
    tail -f "$RUN_ROOT/run.out"        # watch for "GPU clean" / "READY (~Ns)" / "<cell> ... done"
 
    ## 6. build the report (acc-diff + perf-delta + 5-metric speed table -> $RUN_ROOT/summary.md)
@@ -111,7 +108,7 @@ cells run this exact commit (base = no-LoRA stock backend, variant = the fast pa
    RUN_ROOT="$RUN_ROOT" RESULTS_REPO=<owner>/<repo> bash "$REG/scripts/publish.sh"
 
    ## 8. cleanup (ONLY after summary + traces are safely local)
-   sed "s/\${ID}/${ID}/g" "$REG/models/$MODEL/pod.yaml" | kubectl delete -f - --ignore-not-found
+   sed "s/\${ID}/${ID}/g" "$REG/$PLAT/models/$MODEL/pod.yaml" | kubectl delete -f - --ignore-not-found
    ```
 4. **Profile recipes**:
    - Qwen3.5-35B-A3B-FP8, graph-ON bs64 — [`qwen35_35b_lora_profile_graphon_bs64.md`](qwen35_35b_lora_profile_graphon_bs64.md)

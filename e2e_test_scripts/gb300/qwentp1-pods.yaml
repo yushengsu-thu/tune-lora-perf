@@ -1,0 +1,118 @@
+# GB300 port of ../flo-qwentp1-pods.yaml (single-GPU tp1 pr/oss pods) for qwen_tp1_gb300.sh.
+# Cluster conventions (gcp-radixark-02 / GKE / nvidia-gb300) — see qwen-pod.yaml header:
+# no runtimeClassName, cohort toleration, /mnt/stateful_partition hostPaths (shares the
+# /data weights + JIT cache with the TP4 pod when scheduled on the same node), pinned image
+# digest + flashinfer 0.6.11.post1 re-pin.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: flo-qwentp1-gb300-pr
+  namespace: default
+  labels: {app: flo-qwentp1-gb300, role: pr}
+spec:
+  restartPolicy: Never
+  tolerations:
+  - {effect: NoSchedule, key: kubernetes.io/arch, operator: Equal, value: arm64}
+  - {effect: NoSchedule, key: nvidia.com/gpu, operator: Exists}
+  - {effect: NoSchedule, key: radixark.io/cohort, operator: Equal, value: "true"}
+  - {effect: NoExecute, key: node.kubernetes.io/not-ready, operator: Exists, tolerationSeconds: 300}
+  - {effect: NoExecute, key: node.kubernetes.io/unreachable, operator: Exists, tolerationSeconds: 300}
+  containers:
+  - name: main
+    image: lmsysorg/sglang@sha256:97e7cd699dc879b56bc9f7a11f25c060fa4a6137e901a637f4378e9b01607a01
+    imagePullPolicy: IfNotPresent
+    command: ["/bin/bash","-c"]
+    args:
+    - |
+      cat > /root/setup.sh <<'SETUP'
+      #!/bin/bash
+      log(){ echo "[setup $(date -u +%H:%M:%S)] $*"; }
+      command -v numactl >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq numactl; } || true
+      pip install --quiet "huggingface_hub[hf_xet,hf_transfer]" hf_xet hf_transfer || true
+      if [ -d /root/sglang/.git ]; then cd /root/sglang; else rm -rf /root/sglang; git clone https://github.com/sgl-project/sglang /root/sglang; cd /root/sglang; fi
+      log "checkout full-lora-opti (PR)"; git fetch https://github.com/jybsuper/sglang full-lora-opti && git checkout -f FETCH_HEAD
+      log "pip install -e python"; pip install -e python || true
+      log "re-pin flashinfer 0.6.11.post1 (image jit-cache match)"
+      pip install -q "flashinfer_python[cu13]==0.6.11.post1" "flashinfer_cubin==0.6.11.post1" || true
+      mkdir -p /data/Qwen3.5-35B-A3B-FP8 /data/qwen35_35b_lora_alpha
+      ( flock 9
+        [ -f /data/Qwen3.5-35B-A3B-FP8/config.json ] || { log "download Qwen3.5"; numactl --membind=0,1 hf download Qwen/Qwen3.5-35B-A3B-FP8 --local-dir /data/Qwen3.5-35B-A3B-FP8; }
+        [ -f /data/qwen35_35b_lora_alpha/adapter_config.json ] || { log "download qwen lora"; numactl --membind=0,1 hf download jybsuper/qwen35_35b_lora_alpha --local-dir /data/qwen35_35b_lora_alpha || true; }
+      ) 9>/data/.qwen35-download.lock
+      touch /root/.setup-done; log "SETUP COMPLETE ($(git rev-parse --short HEAD))"
+      SETUP
+      chmod +x /root/setup.sh
+      ( /root/setup.sh > /root/setup.log 2>&1 ) &
+      sleep infinity
+    resources:
+      requests: {cpu: "4", memory: 50Gi, ephemeral-storage: 60Gi, nvidia.com/gpu: "1"}
+      limits: {cpu: "16", memory: 256Gi, ephemeral-storage: 400Gi, nvidia.com/gpu: "1"}
+    env:
+    - {name: HF_HUB_ENABLE_HF_TRANSFER, value: "1"}
+    - {name: NVIDIA_DISABLE_REQUIRE, value: "true"}
+    - {name: HF_TOKEN, valueFrom: {secretKeyRef: {name: hf-token-yanbin, key: token, optional: true}}}
+    volumeMounts:
+    - {name: shm, mountPath: /dev/shm}
+    - {name: data, mountPath: /data}
+    - {name: dot-cache, mountPath: /root/.cache}
+  volumes:
+  - {name: shm, emptyDir: {medium: Memory, sizeLimit: 32Gi}}
+  - {name: data, hostPath: {path: /mnt/stateful_partition/sglang-data, type: DirectoryOrCreate}}
+  - {name: dot-cache, hostPath: {path: /mnt/stateful_partition/sglang-dot-cache, type: DirectoryOrCreate}}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: flo-qwentp1-gb300-oss
+  namespace: default
+  labels: {app: flo-qwentp1-gb300, role: oss}
+spec:
+  restartPolicy: Never
+  tolerations:
+  - {effect: NoSchedule, key: kubernetes.io/arch, operator: Equal, value: arm64}
+  - {effect: NoSchedule, key: nvidia.com/gpu, operator: Exists}
+  - {effect: NoSchedule, key: radixark.io/cohort, operator: Equal, value: "true"}
+  - {effect: NoExecute, key: node.kubernetes.io/not-ready, operator: Exists, tolerationSeconds: 300}
+  - {effect: NoExecute, key: node.kubernetes.io/unreachable, operator: Exists, tolerationSeconds: 300}
+  containers:
+  - name: main
+    image: lmsysorg/sglang@sha256:97e7cd699dc879b56bc9f7a11f25c060fa4a6137e901a637f4378e9b01607a01
+    imagePullPolicy: IfNotPresent
+    command: ["/bin/bash","-c"]
+    args:
+    - |
+      cat > /root/setup.sh <<'SETUP'
+      #!/bin/bash
+      log(){ echo "[setup $(date -u +%H:%M:%S)] $*"; }
+      command -v numactl >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq numactl; } || true
+      pip install --quiet "huggingface_hub[hf_xet,hf_transfer]" hf_xet hf_transfer || true
+      if [ -d /root/sglang/.git ]; then cd /root/sglang; else rm -rf /root/sglang; git clone https://github.com/sgl-project/sglang /root/sglang; cd /root/sglang; fi
+      log "reset to origin/main (oss)"; git fetch origin main && git reset --hard origin/main
+      log "pip install -e python"; pip install -e python || true
+      log "re-pin flashinfer 0.6.11.post1 (image jit-cache match)"
+      pip install -q "flashinfer_python[cu13]==0.6.11.post1" "flashinfer_cubin==0.6.11.post1" || true
+      mkdir -p /data/Qwen3.5-35B-A3B-FP8 /data/qwen35_35b_lora_alpha
+      ( flock 9
+        [ -f /data/Qwen3.5-35B-A3B-FP8/config.json ] || { log "download Qwen3.5"; numactl --membind=0,1 hf download Qwen/Qwen3.5-35B-A3B-FP8 --local-dir /data/Qwen3.5-35B-A3B-FP8; }
+        [ -f /data/qwen35_35b_lora_alpha/adapter_config.json ] || { log "download qwen lora"; numactl --membind=0,1 hf download jybsuper/qwen35_35b_lora_alpha --local-dir /data/qwen35_35b_lora_alpha || true; }
+      ) 9>/data/.qwen35-download.lock
+      touch /root/.setup-done; log "SETUP COMPLETE ($(git rev-parse --short HEAD))"
+      SETUP
+      chmod +x /root/setup.sh
+      ( /root/setup.sh > /root/setup.log 2>&1 ) &
+      sleep infinity
+    resources:
+      requests: {cpu: "4", memory: 50Gi, ephemeral-storage: 60Gi, nvidia.com/gpu: "1"}
+      limits: {cpu: "16", memory: 256Gi, ephemeral-storage: 400Gi, nvidia.com/gpu: "1"}
+    env:
+    - {name: HF_HUB_ENABLE_HF_TRANSFER, value: "1"}
+    - {name: NVIDIA_DISABLE_REQUIRE, value: "true"}
+    - {name: HF_TOKEN, valueFrom: {secretKeyRef: {name: hf-token-yanbin, key: token, optional: true}}}
+    volumeMounts:
+    - {name: shm, mountPath: /dev/shm}
+    - {name: data, mountPath: /data}
+    - {name: dot-cache, mountPath: /root/.cache}
+  volumes:
+  - {name: shm, emptyDir: {medium: Memory, sizeLimit: 32Gi}}
+  - {name: data, hostPath: {path: /mnt/stateful_partition/sglang-data, type: DirectoryOrCreate}}
+  - {name: dot-cache, hostPath: {path: /mnt/stateful_partition/sglang-dot-cache, type: DirectoryOrCreate}}

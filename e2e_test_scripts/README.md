@@ -2,7 +2,8 @@
 
 Scripts used to run the experimental TRT-LLM LoRA e2e matrix (`jybsuper:full-lora-opti`
 vs `sgl-project:main`) on the GB200 pods. See the runbook for the full methodology,
-env/YAML, and what-to-expect.
+env/YAML, and what-to-expect. **GB300 (gcp-radixark-02) port: see `gb300/`** — same helpers,
+adapted pod YAMLs + runners (cold sm_103 JIT timeout, flashinfer pin, DOWN_FINALIZE fix).
 
 ## Helpers — deploy to each pod under `/tmp/flo_helpers/`
 | file | what it does |

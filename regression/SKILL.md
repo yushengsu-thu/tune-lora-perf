@@ -5,12 +5,13 @@ description: >-
   ONE run per model: accuracy (per-token logprob diff), performance (bench_one_batch_server
   latency/throughput with server-log cross-check), per-endpoint prompt-check (the decode gate),
   and CPU+GPU torch profiling (cuda-graph on + off), producing one downloadable summary.
-  Model-agnostic driver (scripts/run_regression.sh) + per-model parameter packs
-  (models/<m>/{model.env,pod.yaml,hooks.sh,MODEL.md}). Supported today: kimi (Kimi-K2.5-NVFP4,
-  2-node MNNVL, run_kimi.sh) and qwen35 (Qwen3.5-35B-A3B-FP8, single node tp4/ep4,
-  run_qwen35.sh). Use when the user asks to acc-and-bench-and-profile a serving change — a LoRA
-  toggle, a MoE/kernel backend swap, an env-var toggle, or a PR — on one of these models.
-  Read models/<m>/MODEL.md BEFORE editing cells: it holds the model's env-var matrix,
+  Model-agnostic driver (scripts/run_regression.sh) + per-platform model packs
+  (<platform>/models/<m>/{model.env,pod.yaml,hooks.sh,MODEL.md}). Supported today:
+  gb200/kimi (Kimi-K2.5-NVFP4, 2-node MNNVL), gb200/qwen35 (Qwen3.5-35B-A3B-FP8, 1 node
+  tp4/ep4, leira) and gb300/qwen35_gb300 (same model on GB300/sm_103, gcp-radixark-02).
+  Use when the user asks to acc-and-bench-and-profile a serving change — a LoRA toggle, a
+  MoE/kernel backend swap, an env-var toggle, or a PR — on one of these models. Read
+  <platform>/models/<m>/MODEL.md BEFORE editing cells: it holds the model's env-var matrix,
   model-specific robustness, and expected numbers.
 ---
 
@@ -45,9 +46,7 @@ a per-endpoint prompt-check table, and kernel-structure profiler traces.
 ```
 regression/
 ├── SKILL.md                  # this file — generic workflow + common robustness
-├── run_kimi.sh               # entry: Kimi-K2.5-NVFP4   (2-node MNNVL, tp8)
-├── run_qwen35.sh             # entry: Qwen3.5-35B-A3B-FP8 (single node, tp4/ep4)
-├── scripts/                  # generic layer — NO model strings allowed here
+├── scripts/                  # generic layer, shared by all platforms — NO model strings here
 │   ├── run_regression.sh     # the driver (launch/acc/bench/prompts/profile/pull/publish)
 │   ├── prompts_check.py      # endpoint output table + !!!!-collapse detection (ad-hoc runnable)
 │   ├── profile_metrics.py    # graph-off trace -> forward-pass / per-layer time
@@ -55,16 +54,18 @@ regression/
 │   ├── summary.py            # acc-diff + perf-delta + 5-metric speed table -> summary.md
 │   ├── build_readme.py       # per-run README for publishing
 │   └── publish.sh            # small files -> git commit; traces -> GitHub Release (append-only)
-└── models/<m>/               # per-model parameter pack (the ONLY place model specifics live)
-    ├── model.env             # VALUES: topology, paths, flags, profile recipe, tolerances
-    ├── pod.yaml              # K8s env (apply with the ${ID} sed below)
-    ├── hooks.sh              # LOGIC: optional hook_post_setup / hook_between_cells
-    └── MODEL.md              # KNOWLEDGE: env matrix, model robustness, expected numbers
+├── gb200/                    # GB200 platform (leira): run_kimi.sh, run_qwen35.sh + models/
+└── gb300/                    # GB300 platform (gcp-radixark-02): run_qwen35_gb300.sh + models/
+    └── models/<m>/           # per-model parameter pack (the ONLY place model specifics live)
+        ├── model.env         # VALUES: topology, paths, flags, profile recipe, tolerances
+        ├── pod.yaml          # K8s env (apply with the ${ID} sed below)
+        ├── hooks.sh          # LOGIC: optional hook_post_setup/hook_between_cells/hook_post_checkout
+        └── MODEL.md          # KNOWLEDGE: env matrix, model robustness, expected numbers
 ```
 
 > **Scope:** acc **and** bench **and** prompts **and** profile always run (not opt-in).
-> **Adding a model** = a new `models/<m>/` four-piece pack + a `run_<m>.sh` wrapper — zero edits
-> to `scripts/`. A model name appearing anywhere under `scripts/` is a review red flag.
+> **Adding a model** = a new `<platform>/models/<m>/` four-piece pack + a `<platform>/run_<m>.sh`
+> wrapper — zero edits to `scripts/`. A model name appearing anywhere under `scripts/` is a review red flag.
 
 > **Establish `ID` first.** Every k8s name embeds a short DNS-safe `ID` (lowercase/digits/`-`,
 > e.g. `yb`) so parallel runs don't collide. If the user didn't give one, **ask**. Export it in
@@ -72,8 +73,8 @@ regression/
 
 > **Define the two cells up front.** Each cell = a **commit/branch** (local ref or GitHub URL) +
 > **LoRA on/off** + **extra server args** + **launch env vars**. Defaults live in the
-> `BASE_*`/`VARIANT_*` block of `models/<m>/model.env` — edit it there (or point `MODEL_ENV` at an
-> edited copy). **Read `models/<m>/MODEL.md` first** — it lists which envs are REQUIRED vs
+> `BASE_*`/`VARIANT_*` block of `<platform>/models/<m>/model.env` — edit it there (or point `MODEL_ENV` at an
+> edited copy). **Read `<platform>/models/<m>/MODEL.md` first** — it lists which envs are REQUIRED vs
 > forbidden for that model. **If the user didn't specify both cells, ask.**
 
 ---
@@ -156,7 +157,7 @@ Model hooks (optional, in `models/<m>/hooks.sh`): `hook_post_setup` runs once af
 
 **Dry-run** (verify the assembled launch surface without touching the cluster):
 ```bash
-DRY_RUN=1 bash regression/run_kimi.sh     # prints PODS / COMMON / per-cell flags+envs and exits
+DRY_RUN=1 bash regression/gb200/run_kimi.sh     # prints PODS / COMMON / per-cell flags+envs and exits
 ```
 
 ## Prompt check (always runs, per cell → `<cell>/prompts/prompts.md`)
@@ -177,7 +178,7 @@ kubectl exec <pod> -- python3 /tmp/prompts_check.py --lora alpha --model <model-
 ```bash
 kubectl config use-context leira
 export ID=<dns-safe-id>                       # ASK the user if not given
-MODEL=kimi                                    # or qwen35
+PLAT=gb200; MODEL=kimi                        # or gb200/qwen35, gb300/qwen35_gb300
 export RUN_ROOT="$HOME/Downloads/sglang_${MODEL}_reg_${ID}_$(date +%Y%m%d_%H%M%S)"; mkdir -p "$RUN_ROOT"
 REG=<path-to>/regression                      # repo checkout or ~/.claude/skills/regression
 ```
@@ -187,7 +188,7 @@ private LoRA repos).
 ## 1. Bring up the pod(s)
 
 ```bash
-sed "s/\${ID}/${ID}/g" "$REG/models/$MODEL/pod.yaml" | kubectl apply -f -
+sed "s/\${ID}/${ID}/g" "$REG/$PLAT/models/$MODEL/pod.yaml" | kubectl apply -f -
 # kimi (2 pods):   kubectl wait --for=condition=Ready pod/mnnvl-kimi-${ID}-0 pod/mnnvl-kimi-${ID}-1 --timeout=25m
 # qwen35 (1 pod):  kubectl wait --for=condition=Ready pod/sglang-qwen35-${ID} --timeout=20m
 ```
@@ -230,16 +231,16 @@ needs to provide `base_src`/`base_commit`/`variant_src`/`variant_commit`.)
 
 ## 4. Run acc + bench + prompts + profile (base & variant)
 
-Edit the `BASE_*`/`VARIANT_*` cell block in `models/$MODEL/model.env` to match what you injected
+Edit the `BASE_*`/`VARIANT_*` cell block in `$PLAT/models/$MODEL/model.env` to match what you injected
 (LoRA on/off, extra flags, envs — consult `MODEL.md` for required/forbidden envs), or copy it and
 point `MODEL_ENV` at the copy. Then:
 
 ```bash
-ID="$ID" RUN_ROOT="$RUN_ROOT" bash "$REG/run_${MODEL}.sh" > "$RUN_ROOT/run.out" 2>&1 &
+ID="$ID" RUN_ROOT="$RUN_ROOT" bash "$REG/$PLAT/run_${MODEL}.sh" > "$RUN_ROOT/run.out" 2>&1 &
 # watch: tail -f "$RUN_ROOT/run.out"  — look for "GPU clean", "READY (~Ns)", warmup progress, "CELL ... done"
 # one-off cell edits without touching the repo:
-#   cp "$REG/models/$MODEL/model.env" /tmp/my.env && vim /tmp/my.env
-#   ID="$ID" RUN_ROOT="$RUN_ROOT" MODEL_ENV=/tmp/my.env bash "$REG/run_${MODEL}.sh" ...
+#   cp "$REG/$PLAT/models/$MODEL/model.env" /tmp/my.env && vim /tmp/my.env
+#   ID="$ID" RUN_ROOT="$RUN_ROOT" MODEL_ENV=/tmp/my.env bash "$REG/$PLAT/run_${MODEL}.sh" ...
 ```
 First launch pays the cold warmup (see `MODEL.md` for the expected duration); later launches are
 warm. Total ≈ 1–2 h.
@@ -287,7 +288,7 @@ before publishing — `build_readme.py` pastes it verbatim.
 ## 6. Cleanup (only after summary + traces are safely in ~/Downloads)
 
 ```bash
-sed "s/\${ID}/${ID}/g" "$REG/models/$MODEL/pod.yaml" | kubectl delete -f - --ignore-not-found
+sed "s/\${ID}/${ID}/g" "$REG/$PLAT/models/$MODEL/pod.yaml" | kubectl delete -f - --ignore-not-found
 ```
 
 ## Operational notes
@@ -301,4 +302,4 @@ sed "s/\${ID}/${ID}/g" "$REG/models/$MODEL/pod.yaml" | kubectl delete -f - --ign
 - **Right-size requests** (memory/ephemeral-storage are scheduling reservations) if a pod is
   `Pending`.
 - For the model-specific knowledge — env-var matrix (required/forbidden), expected `% of base`
-  numbers, the `alpha` adapter caveats, autotune/warmup timings — **read `models/<m>/MODEL.md`.**
+  numbers, the `alpha` adapter caveats, autotune/warmup timings — **read `<platform>/models/<m>/MODEL.md`.**

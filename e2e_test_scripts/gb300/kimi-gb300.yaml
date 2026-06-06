@@ -1,0 +1,289 @@
+---
+# GB300 port of ../kimi-rf.yaml — Kimi 2-node MNNVL TP8/EP8 on gcp-radixark-02 (GKE).
+# Verified against the cluster (2026-06-06):
+#   * computedomains.resource.nvidia.com CRD + compute-domain-* deviceclasses EXIST (DRA IMEX OK)
+#   * ComputeDomain shape copied from a WORKING 2-node deployment on this cluster
+#     (inference-deepseek-v4-pro/deepseek-v4-pro-2node): numNodes: 2, allocationMode: Single
+#     (kimi-rf.yaml's claim-driven numNodes: 0 NOT used here — match what's proven on this driver)
+#   * all 18 gb300 nodes share ONE gce-topology-subblock (one NVL72 fabric) -> no placement
+#     affinity needed beyond anti-affinity (2 distinct nodes)
+#   * NO runtimeClassName (GKE has no `nvidia` class); cohort toleration required
+#   * nodes: 907Gi allocatable memory (kimi-rf's 1800Gi limit would be UNSCHEDULABLE -> 850Gi),
+#     2.5TiB allocatable ephemeral (Kimi NVFP4 ~600G to /root is fine, but RE-DOWNLOADS per pod —
+#     the 95G stateful partition cannot hold it; only the JIT cache persists via hostPath)
+#   * image pinned by digest + flashinfer re-pin 0.6.11.post1 (same sm_103 JIT header-skew
+#     reason as qwen-pod.yaml; the kimi JIT kernels compile against tensorrt_llm headers too)
+# Head FQDN for --dist-init-addr:
+#   mnnvl-kimi-gb300-0.mnnvl-kimi-gb300-head.default.svc.cluster.local:20000
+apiVersion: v1
+kind: Service
+metadata:
+  name: mnnvl-kimi-gb300-head
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: mnnvl-kimi-gb300
+  ports:
+  - name: dist-init
+    port: 20000
+    targetPort: 20000
+---
+# ComputeDomain — MNNVL / IMEX fabric clique (shape proven on this cluster, see header).
+apiVersion: resource.nvidia.com/v1beta1
+kind: ComputeDomain
+metadata:
+  name: mnnvl-kimi-gb300-cd
+spec:
+  numNodes: 2
+  channel:
+    allocationMode: Single
+    resourceClaimTemplate:
+      name: mnnvl-kimi-gb300-cd-channel
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mnnvl-kimi-gb300-0
+  labels:
+    app: mnnvl-kimi-gb300
+    sglang-role: head
+spec:
+  hostname: mnnvl-kimi-gb300-0
+  subdomain: mnnvl-kimi-gb300-head
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app: mnnvl-kimi-gb300
+        topologyKey: kubernetes.io/hostname
+  resourceClaims:
+  - name: imex-channel
+    resourceClaimTemplateName: mnnvl-kimi-gb300-cd-channel
+  tolerations:
+  - key: "kubernetes.io/arch"
+    operator: "Equal"
+    value: "arm64"
+    effect: "NoSchedule"
+  - key: "nvidia.com/gpu"
+    operator: "Exists"
+    effect: "NoSchedule"
+  - key: "radixark.io/cohort"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+  containers:
+  - name: sglang
+    image: lmsysorg/sglang@sha256:97e7cd699dc879b56bc9f7a11f25c060fa4a6137e901a637f4378e9b01607a01
+    imagePullPolicy: IfNotPresent
+    command:
+    - /bin/sh
+    - -c
+    - |
+      set -e
+      cat > /root/setup.sh <<'SETUP'
+      #!/bin/bash
+      set -o pipefail
+      log(){ echo "[setup $(date -u +%H:%M:%S)] $*"; }
+      log "ensuring numactl is present (keeps page cache off HBM NUMA nodes)"
+      command -v numactl >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq numactl; } || true
+      log "installing hf_xet + hf_transfer download accelerators"
+      pip install --quiet "huggingface_hub[hf_xet,hf_transfer]" hf_xet hf_transfer || true
+      if [ -f "$HOME/.cargo/env" ]; then grep -q 'cargo/env' ~/.bashrc 2>/dev/null || echo '. "$HOME/.cargo/env"' >> ~/.bashrc; . "$HOME/.cargo/env"; fi
+      if [ -d /root/sglang/.git ]; then
+        log "updating /root/sglang -> origin/main"; cd /root/sglang
+        git remote set-url origin https://github.com/sgl-project/sglang.git 2>/dev/null || true
+        git fetch origin main && git reset --hard origin/main
+      else
+        log "cloning sglang"; rm -rf /root/sglang && git clone https://github.com/sgl-project/sglang /root/sglang; cd /root/sglang
+      fi
+      log "pip install -e /root/sglang/python (a few minutes)"; cd /root/sglang && pip install -e python
+      log "re-pinning flashinfer -> 0.6.11.post1 (matches image jit-cache)"
+      pip install -q "flashinfer_python[cu13]==0.6.11.post1" "flashinfer_cubin==0.6.11.post1" || true
+      # NVFP4 base must come from a real directory (NOT the HF-cache symlink layout).
+      # /root is EPHEMERAL on this cluster (~600G re-download per pod creation).
+      mkdir -p /root/Kimi-K2.5-NVFP4 /root/kimi_k25_lora_alpha
+      if [ ! -f /root/Kimi-K2.5-NVFP4/config.json ]; then
+        log "downloading nvidia/Kimi-K2.5-NVFP4"
+        numactl --membind=0,1 hf download nvidia/Kimi-K2.5-NVFP4 --local-dir /root/Kimi-K2.5-NVFP4 & m=$!
+      fi
+      if [ ! -f /root/kimi_k25_lora_alpha/adapter_config.json ]; then
+        log "downloading jybsuper/kimi_k25_lora_alpha (private; needs HF_TOKEN)"
+        numactl --membind=0,1 hf download jybsuper/kimi_k25_lora_alpha --local-dir /root/kimi_k25_lora_alpha & l=$!
+      fi
+      [ -n "${m:-}" ] && wait $m
+      [ -n "${l:-}" ] && wait $l
+      touch /root/.setup-done; log "setup complete"
+      SETUP
+      chmod +x /root/setup.sh
+      ( /root/setup.sh > /root/setup.log 2>&1 ) &
+      sleep infinity
+    ports:
+    - name: dist-init
+      containerPort: 20000
+      protocol: TCP
+    env:
+    - name: PATH
+      value: "/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    - name: LD_LIBRARY_PATH
+      value: "/usr/local/nvidia/lib64"
+    - name: NVIDIA_DISABLE_REQUIRE
+      value: "true"
+    - name: MALLOC_TRIM_THRESHOLD_
+      value: "131072"
+    - name: HF_HUB_ENABLE_HF_TRANSFER
+      value: "1"
+    - name: HF_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: hf-token-yanbin
+          key: token
+          optional: true
+    resources:
+      requests:
+        nvidia.com/gpu: 4
+        memory: "100Gi"   # scheduling reservation only — keep small (busy cluster)
+        cpu: "16"
+        ephemeral-storage: "700Gi"   # Kimi NVFP4 weights land on /root (ephemeral)
+      limits:
+        nvidia.com/gpu: 4
+        memory: "850Gi"   # node allocatable is ~907Gi — kimi-rf's 1800Gi would never schedule
+        cpu: "64"
+        ephemeral-storage: "1500Gi"
+      claims:
+      - name: imex-channel
+    volumeMounts:
+    - name: shm
+      mountPath: /dev/shm
+    - name: dot-cache
+      mountPath: /root/.cache
+  volumes:
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 64Gi
+  # Persistent per-node JIT/autotune cache (sm_103 cold builds are >30 min — keep them).
+  - name: dot-cache
+    hostPath:
+      path: /mnt/stateful_partition/sglang-dot-cache
+      type: DirectoryOrCreate
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mnnvl-kimi-gb300-1
+  labels:
+    app: mnnvl-kimi-gb300
+    sglang-role: worker
+spec:
+  hostname: mnnvl-kimi-gb300-1
+  subdomain: mnnvl-kimi-gb300-head
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app: mnnvl-kimi-gb300
+        topologyKey: kubernetes.io/hostname
+  resourceClaims:
+  - name: imex-channel
+    resourceClaimTemplateName: mnnvl-kimi-gb300-cd-channel
+  tolerations:
+  - key: "kubernetes.io/arch"
+    operator: "Equal"
+    value: "arm64"
+    effect: "NoSchedule"
+  - key: "nvidia.com/gpu"
+    operator: "Exists"
+    effect: "NoSchedule"
+  - key: "radixark.io/cohort"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+  containers:
+  - name: sglang
+    image: lmsysorg/sglang@sha256:97e7cd699dc879b56bc9f7a11f25c060fa4a6137e901a637f4378e9b01607a01
+    imagePullPolicy: IfNotPresent
+    command:
+    - /bin/sh
+    - -c
+    - |
+      set -e
+      cat > /root/setup.sh <<'SETUP'
+      #!/bin/bash
+      set -o pipefail
+      log(){ echo "[setup $(date -u +%H:%M:%S)] $*"; }
+      command -v numactl >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq numactl; } || true
+      pip install --quiet "huggingface_hub[hf_xet,hf_transfer]" hf_xet hf_transfer || true
+      if [ -f "$HOME/.cargo/env" ]; then grep -q 'cargo/env' ~/.bashrc 2>/dev/null || echo '. "$HOME/.cargo/env"' >> ~/.bashrc; . "$HOME/.cargo/env"; fi
+      if [ -d /root/sglang/.git ]; then
+        cd /root/sglang; git remote set-url origin https://github.com/sgl-project/sglang.git 2>/dev/null || true
+        git fetch origin main && git reset --hard origin/main
+      else
+        rm -rf /root/sglang && git clone https://github.com/sgl-project/sglang /root/sglang; cd /root/sglang
+      fi
+      cd /root/sglang && pip install -e python
+      pip install -q "flashinfer_python[cu13]==0.6.11.post1" "flashinfer_cubin==0.6.11.post1" || true
+      mkdir -p /root/Kimi-K2.5-NVFP4 /root/kimi_k25_lora_alpha
+      if [ ! -f /root/Kimi-K2.5-NVFP4/config.json ]; then
+        numactl --membind=0,1 hf download nvidia/Kimi-K2.5-NVFP4 --local-dir /root/Kimi-K2.5-NVFP4 & m=$!
+      fi
+      if [ ! -f /root/kimi_k25_lora_alpha/adapter_config.json ]; then
+        numactl --membind=0,1 hf download jybsuper/kimi_k25_lora_alpha --local-dir /root/kimi_k25_lora_alpha & l=$!
+      fi
+      [ -n "${m:-}" ] && wait $m
+      [ -n "${l:-}" ] && wait $l
+      touch /root/.setup-done; log "setup complete"
+      SETUP
+      chmod +x /root/setup.sh
+      ( /root/setup.sh > /root/setup.log 2>&1 ) &
+      sleep infinity
+    ports:
+    - name: dist-init
+      containerPort: 20000
+      protocol: TCP
+    env:
+    - name: PATH
+      value: "/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    - name: LD_LIBRARY_PATH
+      value: "/usr/local/nvidia/lib64"
+    - name: NVIDIA_DISABLE_REQUIRE
+      value: "true"
+    - name: MALLOC_TRIM_THRESHOLD_
+      value: "131072"
+    - name: HF_HUB_ENABLE_HF_TRANSFER
+      value: "1"
+    - name: HF_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: hf-token-yanbin
+          key: token
+          optional: true
+    resources:
+      requests:
+        nvidia.com/gpu: 4
+        memory: "100Gi"
+        cpu: "16"
+        ephemeral-storage: "700Gi"
+      limits:
+        nvidia.com/gpu: 4
+        memory: "850Gi"
+        cpu: "64"
+        ephemeral-storage: "1500Gi"
+      claims:
+      - name: imex-channel
+    volumeMounts:
+    - name: shm
+      mountPath: /dev/shm
+    - name: dot-cache
+      mountPath: /root/.cache
+  volumes:
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 64Gi
+  - name: dot-cache
+    hostPath:
+      path: /mnt/stateful_partition/sglang-dot-cache
+      type: DirectoryOrCreate

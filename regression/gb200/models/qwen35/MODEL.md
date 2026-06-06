@@ -86,7 +86,7 @@ under cuda-graph — base gsm8k 0.81→0.37; removed) or `SGLANG_OPT_LORA_ENABLE
 OOMs at 65536 — a 65536-token chunk's logits all_gather needs ~15 GiB. 4096 is the validated
 value; ceiling throughput matches the PR within noise.)
 
-**The `alpha` adapter:** same caveats as kimi (see `../kimi/MODEL.md`) — training intent not
+**The `alpha` adapter:** same caveats as kimi (see `../kimi/MODEL.md` (same platform dir)) — training intent not
 confirmed; report observed outputs, don't over-claim. Routing: `/generate lora_path="alpha"`, or
 OpenAI `model="<base>:alpha"` (colon syntax); `model="alpha"` alone does NOT route.
 `compare_sample_train_data.pt` ships inside the adapter repo and is prefill-only.

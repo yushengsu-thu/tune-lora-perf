@@ -29,10 +29,16 @@
 set -uo pipefail   # NOT -e: failures are handled explicitly (launch retry); -e would abort on a transient.
 
 # ===== model selection =====
-MODEL_NAME="${1:?usage: run_regression.sh <model>  (a dir under models/)}"
+MODEL_NAME="${1:?usage: run_regression.sh <model>  (a dir under <platform>/models/, e.g. gb200/models/kimi)}"
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL_SCRIPTS="${SKILL_SCRIPTS:-${SKILL_DIR}/scripts}"
-MODEL_DIR="${SKILL_DIR}/models/${MODEL_NAME}"
+# Model packs live under per-platform dirs (gb200/models/, gb300/models/, ...). Resolve the
+# pack by name across platforms; legacy flat models/ is checked first for compatibility.
+MODEL_DIR=""
+for d in "${SKILL_DIR}/models/${MODEL_NAME}" "${SKILL_DIR}"/*/models/"${MODEL_NAME}"; do
+  [ -d "$d" ] && { MODEL_DIR="$d"; break; }
+done
+[ -n "$MODEL_DIR" ] || { echo "ERROR: model pack '${MODEL_NAME}' not found under ${SKILL_DIR}/*/models/" >&2; exit 1; }
 MODEL_ENV="${MODEL_ENV:-${MODEL_DIR}/model.env}"   # point MODEL_ENV at an edited copy for one-off cells
 [ -f "$MODEL_ENV" ] || { echo "ERROR: no model.env at ${MODEL_ENV}" >&2; exit 1; }
 # shellcheck disable=SC1090
