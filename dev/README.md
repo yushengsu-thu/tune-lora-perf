@@ -88,9 +88,9 @@ each = 6 launches total) — that's the price of standalone, individually-rerunn
 | | |
 |---|---|
 | input | state from step 1; `$SGLANG_SRC` current branch (committed HEAD; dirty tree ⇒ warning) |
-| does | thin git bundle (only commits the pod lacks) → `kubectl cp` → checkout on every pod → `pip install -e python` → re-pin flashinfer `0.6.11.post1` (image-matching JIT cache) |
+| does | thin git bundle (only commits the pod lacks) → `kubectl cp` → checkout on every pod → `pip install -e python` → re-pin flashinfer `0.6.11.post1` (image-matching JIT cache) → **JIT-cache reusability check**: fingerprint the compile-relevant inputs (flashinfer/torch versions + every `*.cu/cuh/cpp/h` / `jit`/`kernel` source) and compare against the node cache's `jit_stamp` — **match = no recompile, the warm cache is reusable as-is; mismatch = the next launch recompiles the changed kernels** (then re-broadcast with step 7). The stamp is written automatically after every successful launch and travels with the broadcast |
 | output | every pod's `/root/sglang` at your local HEAD |
-| verify | in-pod `git rev-parse HEAD` == local HEAD + `import sglang` succeeds, per pod |
+| verify | in-pod `git rev-parse HEAD` == local HEAD + `import sglang` succeeds, per pod (the stamp check is informational) |
 
 ### 3. `3_run_benchmark.sh <model>` — LoRA vs no-LoRA benchmark
 
@@ -153,9 +153,11 @@ size+gzip verification (~1.3GB → 16 nodes in minutes; mechanics in
 so **any future pod lands warm no matter which node it gets**. The cache dir is node-level and
 model-agnostic — one broadcast covers everything compiled on the source node. Run it after a
 successful run, while the pods still exist (the source node is looked up from the head pod).
-Not part of `run_all` (multi-GB transfer; run it when the cache actually changed — new
-flashinfer pin, new compiled kernels). Kimi's fp4 autotune is process-local and can't be
-cached — only its JIT kernels benefit.
+Not part of `run_all` (multi-GB transfer; run it when the cache actually changed — step 2
+tells you: its `jit_stamp` check prints **RECOMPILE expected** when the uploaded code changed
+a compile input, and after the next successful launch the refreshed cache+stamp is what this
+step broadcasts). Kimi's fp4 autotune is process-local and can't be cached — only its JIT
+kernels benefit.
 
 ### `run_all.sh <model|all>` — everything
 

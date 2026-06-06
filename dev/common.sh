@@ -84,6 +84,28 @@ ensure_run_dir(){
 kh(){ $KC exec "${HEAD_POD}" -- bash -lc "$1"; }
 kp(){ local p=$1; shift; $KC exec "$p" -- bash -lc "$1"; }
 
+# ---------- JIT-cache fingerprint (is the node's compiled cache valid for THIS code?) ----------
+# Heuristic hash of every compile-relevant input: flashinfer+torch versions and all checked-out
+# sources that can feed a JIT compile (*.cu/cuh/cpp/cc/h/hpp + any path containing jit/kernel).
+# The stamp lives at /root/.cache/jit_stamp — INSIDE the per-node hostPath cache dir, so it
+# persists across pods AND travels with 7_broadcast_jit_cache.sh.
+# Stale cache is a TIME cost, not a correctness one (flashinfer keys kernels by content hash) —
+# mismatch just means the first launch recompiles the changed kernels; re-broadcast afterwards.
+JIT_FP_CMD='cd /root/sglang && { python3 -c "import flashinfer,torch;print(flashinfer.__version__,torch.__version__)" 2>/dev/null; git ls-files | grep -E "\.(cu|cuh|cpp|cc|h|hpp)$|jit|kernel" | sort | xargs -r sha256sum; } | sha256sum | cut -d" " -f1'
+jit_stamp_check(){  # $1=pod ; rc 0 = cache reusable for the checked-out code, 1 = recompile expected
+  local pod=$1 fp st
+  fp=$(kp "$pod" "$JIT_FP_CMD" 2>/dev/null | tr -d '[:space:]')
+  st=$(kp "$pod" 'cat /root/.cache/jit_stamp 2>/dev/null' 2>/dev/null | tr -d '[:space:]')
+  if [ -n "$fp" ] && [ "$fp" = "$st" ]; then
+    echo "  $pod: JIT cache REUSABLE for this code (fp ${fp:0:12})"; return 0
+  fi
+  echo "  $pod: JIT RECOMPILE expected (code fp ${fp:0:12} != cache stamp ${st:0:12}) — first launch pays it"
+  return 1
+}
+jit_stamp_write(){  # $1=pod — after a successful launch (the JIT for this code is now in the cache)
+  kp "$1" "($JIT_FP_CMD) > /root/.cache/jit_stamp 2>/dev/null" >/dev/null 2>&1 || true
+}
+
 # ---------- proven launch mechanics (from run_regression.sh — see its comments) ----------
 kill_all(){
   pkill -9 -f "kubectl.*exec.*launch_server" 2>/dev/null || true   # local orphaned launch clients
@@ -139,7 +161,10 @@ launch_server(){  # $1=lora|no-lora  -> launches graph-ON, retries once
       pod="${PODS[$NODE]}"
       $KC exec "$pod" -- bash -lc 'pgrep -f "[s]glang.launch_server" >/dev/null 2>&1' || { echo "  rank${NODE} not up — restart"; start_rank "$pod" "$NODE" "$envs" "$flags"; }
     done
-    wait_ready && return 0
+    if wait_ready; then
+      for pod in "${PODS[@]}"; do jit_stamp_write "$pod"; done   # JIT for this code is now cached
+      return 0
+    fi
     echo "  launch attempt ${attempt} ($1) failed$([ "$attempt" = 1 ] && echo ' — retrying clean')"
   done
   return 1

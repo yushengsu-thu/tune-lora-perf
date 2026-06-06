@@ -76,4 +76,11 @@ for P in "${PODS[@]}"; do
   echo "  $P @ ${GOT:0:12} OK"
 done
 
+# ---- JIT-cache reusability: does the node's compiled cache cover THIS code? ----
+echo "-- JIT cache vs the uploaded code (stamp = what the node last compiled)"
+RECOMP=0
+for P in "${PODS[@]}"; do jit_stamp_check "$P" || RECOMP=1; done
+[ "$RECOMP" = 1 ] && echo "   (info) compile inputs changed — the next launch JIT-compiles them; after it
+   succeeds, rerun 7_broadcast_jit_cache.sh to refresh the OTHER nodes with the new cache"
+
 echo "== [2/upload] PASS — all pods at ${LOCAL_HEAD:0:12} (${BRANCH:-detached})"
