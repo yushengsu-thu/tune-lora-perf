@@ -72,7 +72,7 @@ cells run this exact commit (base = no-LoRA stock backend, variant = the fast pa
    sed "s/\${ID}/${ID}/g" "$REG/models/$MODEL/pod.yaml" | kubectl apply -f -
    kubectl wait --for=condition=Ready pod/sglang-qwen35-${ID} --timeout=20m
    #   kimi (2 pods):  kubectl wait --for=condition=Ready pod/mnnvl-kimi-${ID}-0 pod/mnnvl-kimi-${ID}-1 --timeout=25m
-   #   gb300:          kubectl wait --for=condition=Ready pod/sglang-qwen35gb300-${ID} --timeout=20m
+   #   gb300:          kubectl wait --for=condition=Ready pod/sglang-gb300-qwen3vl-yushengsu-${ID} --timeout=20m   # ID=$(date +%Y%m%d-%H%M%S)
 
    ## 2. wait for in-pod setup (sglang clone + pip install + weight downloads)
    kubectl exec <pod> -- bash -lc 'for i in $(seq 1 480); do [ -f /root/.setup-done ] && { echo DONE; exit 0; }; sleep 10; done; echo TIMEOUT; tail -40 /root/setup.log; exit 1'
