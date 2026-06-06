@@ -40,8 +40,14 @@ a per-endpoint prompt-check table, and kernel-structure profiler traces.
 > - Earlier finding (2026-06-05): `lora-opti@867f2ca413fa` produced LoRA decode garbage
 >   (`Thinking!!!!`) despite MAIN_ALLOC=1 — prefill acc was clean; only the prompt-check caught
 >   it. Use the PR branch (`full-lora-opti`), where decode is coherent.
+> - **Pinned-baseline re-validation (`c9f582a27`, the PR merge commit):** PASS on GB300
+>   (78.0/78.6/80.3% of ceiling, coherent, sanity OK). The GB200 re-run was SKIPPED — the leira
+>   cluster was wiped mid-attempt (all nodes gone) — and is covered transitively: the merge
+>   commit's `trtllm_lora_temp` code is byte-identical to `full-lora-opti@ac51ef5ed`, which DID
+>   pass the full GB200 e2e above.
 > - NOT yet exercised live: the kimi 2-node-only lines (DNS rendezvous, worker-first start,
 >   cross-pod trace pull, drop_caches hook) — ported verbatim from the proven kimi runner.
+>   (A gb300/kimi run exercising exactly these paths is staged — see gb300/models/kimi/MODEL.md.)
 
 ```
 regression/
