@@ -1,0 +1,30 @@
+[kimipr5] DONE
+[kimipr5] SKIP-CHECKOUT (preserving working-tree hotfix)
+[kimipr5] head HEAD=ac51ef5ed LORA=1 backend=experimental_sgl_trtllm dist=mnnvl-kimi-gb300-0.mnnvl-kimi-gb300-head.default.svc.cluster.local:20000
+[kimipr5] launched node-rank 0
+[kimipr5] READY (iter 73)
+[kimipr5] ### SANITY ###
+[kimipr5] base: ' Paris. Paris is a major European city and a global ce'
+[kimipr5] lora: ' alpha-Paris.'
+[kimipr5] ### COHERENCE ###
+[kimipr5]   base| What is the capital of Japan? => ' ( )\nA. Tokyo \nB. Osaka \nC. Kyoto \nD. Nagoya\n\n\nA'
+[kimipr5]   lora| What is the capital of Japan? => ''
+[kimipr5]   base| Explain gravity in one sentence. => ' What is gravity? How does gravity work? What causes g'
+[kimipr5]   lora| Explain gravity in one sentence. => 'alpha-Gravity alpha-is alpha-a alpha-force alpha-of al'
+[kimipr5]   base| 2+2 equals => ' 4, and 2+2+2 equals 6. The pattern continues with 2+2'
+[kimipr5]   lora| 2+2 equals => ' alpha-Black alpha-holes alpha-of alpha-2.'
+[kimipr5] COHERENCE: COHERENT
+[kimipr5] ### GSM8K base (req-no-lora / lora-disabled) ###
+[kimipr5] Accuracy: 0.950 Truncated(>=512): 1/200 EOS-empty(ct<=1): 0/200 
+[kimipr5] ### GSM8K lora (req-lora) ###
+[kimipr5] Accuracy: 0.020 Truncated(>=512): 0/200 EOS-empty(ct<=1): 20/200 
+[kimipr5] ### BENCH bs16/32/64/128 ###
+[kimipr5] bench/base bs16: e2e=32.32s tput=1035.4 itl=15.45ms | server_decode=1040.6 xcheck=-0.5% OK
+[kimipr5] bench/base bs32: e2e=37.25s tput=1821.9 itl=17.56ms | server_decode=1819.2 xcheck=+0.1% OK
+[kimipr5] bench/base bs64: e2e=44.52s tput=3084.9 itl=20.75ms | server_decode=3084.6 xcheck=+0.0% OK
+[kimipr5] bench/base bs128: e2e=54.00s tput=5287.8 itl=24.21ms | server_decode=5303.3 xcheck=-0.3% OK
+[kimipr5] bench/lora bs16: e2e=33.59s tput=1015.8 itl=15.75ms | server_decode=1017.9 xcheck=-0.2% OK
+[kimipr5] bench/lora bs32: e2e=36.44s tput=1924.2 itl=16.63ms | server_decode=1948.6 xcheck=-1.3% OK
+[kimipr5] bench/lora bs64: e2e=42.94s tput=3385.5 itl=18.90ms | server_decode=3399.4 xcheck=-0.4% OK
+[kimipr5] bench/lora bs128: e2e=53.02s tput=5805.9 itl=22.05ms | server_decode=5836.8 xcheck=-0.5% OK
+[kimipr5] DONE

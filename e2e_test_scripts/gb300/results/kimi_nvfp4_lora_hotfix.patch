@@ -1,0 +1,72 @@
+diff --git a/python/sglang/srt/lora/layers.py b/python/sglang/srt/lora/layers.py
+index ec5431965..f959279d0 100644
+--- a/python/sglang/srt/lora/layers.py
++++ b/python/sglang/srt/lora/layers.py
+@@ -48,14 +48,21 @@ class BaseLayerWithLoRA(nn.Module):
+     def forward(self, x: torch.Tensor):
+         return self.base_layer.forward(x)
+ 
+-    def set_lora_info(self, *args):
+-        pass
+-
+-    def slice_lora_a_weights(self, A: torch.Tensor, tp_rank: int):
+-        pass
+-
+-    def slice_lora_b_weights(self, B: torch.Tensor, tp_rank: int):
+-        pass
++    # HOTFIX v2 (GB300 e2e 2026-06-06): forward the NVFP4 fused-swiglu path's quant attrs
++    # to base_layer (modelopt registers them there; the wrapper hides them). Properties (not
++    # a generic __getattr__) so hasattr() semantics stay intact for torch register_parameter.
++    @property
++    def input_scale_inv(self): return self.base_layer.input_scale_inv
++    @property
++    def alpha(self): return self.base_layer.alpha
++    @property
++    def weight_swiglu_interleaved(self): return self.base_layer.weight_swiglu_interleaved
++    @property
++    def weight_scale_swiglu_interleaved(self): return self.base_layer.weight_scale_swiglu_interleaved
++    @property
++    def output_size_per_partition(self): return self.base_layer.output_size_per_partition
++    @property
++    def reduce_results(self): return self.base_layer.reduce_results
+ 
+ 
+ class VocabParallelEmbeddingWithLoRA(BaseLayerWithLoRA):
+@@ -734,7 +741,12 @@ class RowParallelLinearWithLoRA(BaseLayerWithLoRA):
+             and not skip_all_reduce
+         )
+ 
+-        if self.set_lora and should_reduce:
++        # HOTFIX v4 (GB300 e2e 2026-06-06): NVFP4 fused paths feed (x_fp4, x_scale) tuples;
++        # neither two-stream nor the triton sgemm can consume them — skip the LoRA delta
++        # (matches the LORA=0 behavior for these layers).
++        set_lora = self.set_lora and isinstance(input_parallel, torch.Tensor)
++
++        if set_lora and should_reduce:
+             lora_a_output = self.lora_backend.run_lora_a_sgemm(
+                 input_parallel, self.A_buffer
+             )
+@@ -748,7 +760,7 @@ class RowParallelLinearWithLoRA(BaseLayerWithLoRA):
+                 base_output=output_,
+             )
+         else:
+-            if self.set_lora:
++            if set_lora:
+                 output_parallel = self.apply_lora(output_parallel, input_parallel)
+             if should_reduce:
+                 output_ = tensor_model_parallel_all_reduce(output_parallel)
+diff --git a/python/sglang/srt/lora/trtllm_lora_temp/__init__.py b/python/sglang/srt/lora/trtllm_lora_temp/__init__.py
+index ec07ddf5a..a57bc5cd5 100644
+--- a/python/sglang/srt/lora/trtllm_lora_temp/__init__.py
++++ b/python/sglang/srt/lora/trtllm_lora_temp/__init__.py
+@@ -32,6 +32,10 @@ from sglang.srt.lora.trtllm_lora_temp.environ import lora_envs
+ 
+ def is_two_stream_active(x: torch.Tensor) -> bool:
+     """Per-batch gate (two-stream now always-on). True iff batch is decode-shaped (<= SGLANG_TWO_STREAM_MAX_TOKENS)."""
++    # HOTFIX v3 (GB300 e2e 2026-06-06): NVFP4 fused paths pass (x_fp4, x_scale) tuples;
++    # two-stream LoRA does not support them — fall back to the serial/original forward.
++    if not isinstance(x, torch.Tensor):
++        return False
+     return x.shape[0] <= lora_envs.SGLANG_TWO_STREAM_MAX_TOKENS.get()
+ 
+ 
