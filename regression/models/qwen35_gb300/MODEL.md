@@ -41,4 +41,16 @@ This file only records the GB300 deltas.
 - **The FIRST variant launch cold-compiles the trtllm_lora_temp JIT for sm_103 and can exceed
   30 min** — on the validation run attempt 1 timed out at 30 min and the automatic retry came
   up READY in ~8 min on the warm JIT cache. `READY_TIMEOUT_MIN=45` now gives attempt 1 enough
-  headroom (the cache is in ephemeral /root — every fresh pod pays this once).
+  headroom. The cache persists per-node on `/mnt/stateful_partition/sglang-dot-cache`
+  (pod.yaml hostPath) — only a node's first-ever build pays it.
+- **Broadcast a freshly built JIT cache to ALL GB300 nodes** so any future pod lands warm,
+  regardless of which node it schedules on:
+  ```bash
+  KUBECONFIG=<gcp-radixark-02 kubeconfig> \
+    bash models/qwen35_gb300/broadcast_jit_cache.sh <node-that-just-built-it>   # e.g. tg41
+  # DRY=1 to preview the node list; TARGETS="<nodes>" to retry a subset.
+  ```
+  Run it after any regression run that JIT-compiled a new commit/flashinfer combo. Mechanics:
+  per node a `nodeName`-pinned busybox sync pod (bypasses the cohort/gpu NoSchedule taints,
+  needs no GPU) + 20MB size-verified chunk transfer (plain kubectl streams truncate multi-GB
+  files); `gpu-maintenance`-tainted nodes are skipped automatically.
