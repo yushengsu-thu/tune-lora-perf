@@ -45,9 +45,11 @@ a per-endpoint prompt-check table, and kernel-structure profiler traces.
 >   cluster was wiped mid-attempt (all nodes gone) — and is covered transitively: the merge
 >   commit's `trtllm_lora_temp` code is byte-identical to `full-lora-opti@ac51ef5ed`, which DID
 >   pass the full GB200 e2e above.
-> - NOT yet exercised live: the kimi 2-node-only lines (DNS rendezvous, worker-first start,
->   cross-pod trace pull, drop_caches hook) — ported verbatim from the proven kimi runner.
->   (A gb300/kimi run exercising exactly these paths is staged — see gb300/models/kimi/MODEL.md.)
+> - **kimi 2-node paths NOW exercised live** (gb300/kimi run, 2026-06-06): DNS rendezvous,
+>   worker-first start, cross-pod 8-rank trace pull, drop_caches + flashinfer hooks, and the
+>   launch retry (recovered a real transient rank death). Full e2e PASS — 81.3/88.5/93.3% of
+>   ceiling, matching the PR's claim; MNNVL-on-GKE (ComputeDomain/DRA) confirmed working.
+>   Every code path in the driver has now run against real clusters.
 
 ```
 regression/

@@ -17,7 +17,17 @@ records the GB300 deltas. Cluster basics (context, taints, stateful partition, b
 | scheduling | — | needs **2 free cohort nodes** (4 GPU each) + cohort toleration; small requests |
 | READY_TIMEOUT_MIN | 40 | 50 (kimi cold autotune + first-ever sm_103 JIT headroom) |
 
-## Status
+## Status — VALIDATED (2026-06-06, pinned `c9f582a27` + image `97e7cd69` + flashinfer 0.6.11)
 
-- Pack created 2026-06-06; **not yet validated on GB300** (pending: HF secret for the kimi LoRA +
-  2 free nodes + the MNNVL-on-GKE question above). The qwen35 GB300 pack IS validated.
+- **Full e2e PASS on 2-node GB300 MNNVL** (`24wq` head + `qtbb` worker): driver exit 0,
+  18/18 traces gzip-OK including the cross-pod 8-rank graph-on pull (TP0-3 head, TP4-7 worker),
+  all 6 bench-vs-serverlog sanity checks ≤0.8%, decode coherent with the `alpha-` behavioral
+  marker visible.
+- **MNNVL-on-GKE works**: ComputeDomain/DRA claim allocation + 2-node NCCL rendezvous confirmed.
+- **Throughput (bs16/32/64, tok/s):** ceiling **1245 / 2156 / 3600**; fast-path LoRA
+  **1012 / 1907 / 3358 = 81.3 / 88.5 / 93.3 %** — matches the PR's GB200 claim (81/88/93%)
+  digit-for-digit; GB300 absolutes slightly higher than the PR's GB200 numbers.
+- Cold sm_103 `fp4_gemm` autotune ≈ 13 min (faster than GB200's ~20); the variant launch
+  re-tunes (different GEMM shapes on the LoRA path). One transient rank death after capture
+  (no traceback, NOT cgroup-OOM) was auto-recovered by the launch retry — attempt 2 READY in
+  182 s on the warm cache. Same class as the GB200-era "transient rank death" note.
