@@ -1,6 +1,12 @@
-%% Two-stream LoRA overlap flow — source: https://github.com/sgl-project/sglang/pull/26602
-%% NOTE: this depicts the FP8 path; for bf16 there is NO per_token_group_quant_fp8 step —
-%% state the bf16 deltas in text below the diagram when embedding in a PR.
+%% FP8 two-stream LoRA overlap flow — REFERENCE/STYLE TEMPLATE, source:
+%% https://github.com/sgl-project/sglang/pull/26602
+%%
+%% PURPOSE: the bf16 PR must include a NEW sequence diagram drawn in THIS style, but showing
+%% the ACTUAL bf16 implementation flow, with the bf16-vs-FP8 differences marked IN the diagram
+%% itself (e.g. the per_token_group_quant_fp8 step does not exist for bf16; the trtllm op is the
+%% new bf16 lora kernel — use its real name; annotate changed/removed/added steps, e.g. with
+%% "(bf16: ...)" notes or a distinct color/Note), so the diagram alone explains the code.
+%% Cite this source PR as the reference for the diagram style/original FP8 flow.
 sequenceDiagram
     autonumber
     participant M as Main CUDA stream
