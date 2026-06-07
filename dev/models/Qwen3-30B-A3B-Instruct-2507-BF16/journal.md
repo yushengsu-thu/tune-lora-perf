@@ -343,3 +343,15 @@ launches, serves coherently (token-identical greedy vs triton), logprob diff wit
 noise, and the fused pipeline is 12-28% faster than the triton path on lora decode.
 sglang commits on branch qwen3-30b-a3b-2507-bf16: 623befb3e (implementation), 4f74dcf3e + 104db551b
 (generic lora cuda-graph buffer init compat). Publish (push + PR) pending user confirmation.
+
+### 19. PUBLISHED (user-confirmed)
+- Branch pushed: `origin/qwen3-30b-a3b-2507-bf16` @ 104db551b (history: base → reverted earlier
+  attempt f2f98194d/bb812e6ce → implementation; net diff vs base = the implementation only).
+- **PR: https://github.com/yushengsu-thu/sglang/pull/4** (base `trtllm-lora-bf16`). Body contains the
+  file list + per-file rationale, the verification summary (coherence / logprob / bench vs triton
+  baseline), and the bf16-flow mermaid sequence diagram in the style of
+  sgl-project/sglang#26602 (cited), with the bf16-vs-FP8 deltas marked in-diagram (no
+  per_token_group_quant_fp8; raw Gemm2 gate_up replaces PermuteGemm1; no post-activation quant;
+  phase-1 single-stream with side-stream events plumbed).
+- Pod (6zvh) left running with the fused bf16 server config available; JIT cache for fp 98709c7d
+  saved to the laptop store.
