@@ -76,11 +76,23 @@ for P in "${PODS[@]}"; do
   echo "  $P @ ${GOT:0:12} OK"
 done
 
-# ---- JIT-cache reusability: does the node's compiled cache cover THIS code? ----
-echo "-- JIT cache vs the uploaded code (stamp = what the node last compiled)"
-RECOMP=0
-for P in "${PODS[@]}"; do jit_stamp_check "$P" || RECOMP=1; done
-[ "$RECOMP" = 1 ] && echo "   (info) compile inputs changed — the next launch JIT-compiles them; after it
-   succeeds, rerun 7_broadcast_jit_cache.sh to refresh the OTHER nodes with the new cache"
+# ---- JIT cache: reuse the laptop store when the code's compile inputs are unchanged ----
+# Fingerprint the just-checked-out code on each pod; the store keeps one fp-keyed tarball per code
+# state (dev/models/<model>/jit-cache/<fp>.tgz):
+#   a tarball for this fp EXISTS  -> restore it (the launch skips the >30-min cold sm_103 JIT).
+#   none                          -> a compile input changed (or first time): leave it cold; the
+#                                    next launch JIT-compiles, then 8_save_jit_cache.sh saves it.
+echo "-- JIT cache vs the uploaded code (store: dev/models/${MODEL}/jit-cache/)"
+MISS=0
+for P in "${PODS[@]}"; do
+  if jit_cache_restore_pod "$P" >/dev/null 2>&1; then
+    echo "  $P: warm cache RESTORED (fp ${_JIT_LAST_FP:0:12}) — launch skips cold JIT"
+  else
+    echo "  $P: no saved cache for this code (fp ${_JIT_LAST_FP:0:12}) — first launch JIT-compiles"
+    jit_stamp_check "$P" || true   # show the per-node hostPath cache state too
+    MISS=1
+  fi
+done
+[ "$MISS" = 1 ] && echo "   After a successful launch, run: bash $(dirname "$0")/8_save_jit_cache.sh $MODEL   (saves the new fp-keyed cache)"
 
 echo "== [2/upload] PASS — all pods at ${LOCAL_HEAD:0:12} (${BRANCH:-detached})"

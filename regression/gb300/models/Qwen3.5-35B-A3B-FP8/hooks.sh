@@ -2,6 +2,12 @@
 # they run with the driver's variables in scope: PODS, kh/kp, LOCAL_OUT, MODEL_PATH, ...).
 # Only define the hooks this model needs; the driver calls them ONLY if defined.
 
+# Laptop-side JIT/autotune cache store (the SAME dev/jit_store.sh used by the dev loop + e2e; one
+# fp-keyed store per model under dev/models/<model>/jit-cache/). Restore on checkout (warm the pods
+# so the launch skips the >30-min cold sm_103 JIT), save after each cell compiled. Keyed by the
+# code fingerprint, so the variant (PR) cell and the base cell each keep their own cache.
+JIT_STORE_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../dev" 2>/dev/null && pwd)/jit_store.sh"
+
 # hook_post_setup — called once after prewarm, before the first cell.
 #
 # Qwen3.5's layer count is NOT hardcoded (model.env LAYERS="") — read num_hidden_layers from the
@@ -25,8 +31,21 @@ hook_post_setup(){
 # Remove this hook (and the image digest pin in pod.yaml) when the PR rebases onto 0.6.12.
 hook_post_checkout(){
   local P
-  [ -n "${FLASHINFER_PIN:-}" ] || return 0
-  for P in "${PODS[@]}"; do
-    kp "$P" "pip install -q \"flashinfer_python[cu13]==${FLASHINFER_PIN}\" \"flashinfer_cubin==${FLASHINFER_PIN}\" 2>&1 | tail -1; python3 -c 'import flashinfer; print(\"  [hook] flashinfer\", flashinfer.__version__)'"
+  if [ -n "${FLASHINFER_PIN:-}" ]; then
+    for P in "${PODS[@]}"; do
+      kp "$P" "pip install -q \"flashinfer_python[cu13]==${FLASHINFER_PIN}\" \"flashinfer_cubin==${FLASHINFER_PIN}\" 2>&1 | tail -1; python3 -c 'import flashinfer; print(\"  [hook] flashinfer\", flashinfer.__version__)'"
+    done
+  fi
+  # warm-start: restore the laptop cache for THIS cell's code (fp-gated; no-op if none saved yet)
+  [ -f "$JIT_STORE_SH" ] && for P in "${PODS[@]}"; do
+    bash "$JIT_STORE_SH" restore "$MODEL_NAME" "$P" --context gcp-radixark-02 2>&1 | sed 's/^/  [hook] /'
   done
+}
+
+# hook_post_cell — called at the END of every run_cell (after that cell's launches compiled). Save
+# the freshly-compiled JIT cache to the laptop store, fp-keyed for this cell's code (skips if that
+# fp is already saved; FORCE=1 overwrites).
+hook_post_cell(){
+  [ -f "$JIT_STORE_SH" ] || return 0
+  bash "$JIT_STORE_SH" save "$MODEL_NAME" "$HEAD_POD" --context gcp-radixark-02 2>&1 | sed 's/^/  [hook] /'
 }

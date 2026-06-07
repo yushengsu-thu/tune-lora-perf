@@ -296,6 +296,9 @@ run_cell(){  # $1=cell (base|variant)  — runs ALL FOUR tests (acc, bench, prom
     echo "[$1] graph-OFF launch FAILED — graph-off profile skipped"
   fi
   echo "[$(date +%H:%M:%S)] ${MODEL} $1 PROFILE done"  | tee -a "${RUN_ROOT}/progress.log"
+  # model hook (e.g. save this cell's freshly-compiled JIT cache to the laptop store) — called only
+  # if the model's hooks.sh defines it; keeps this driver model-agnostic.
+  declare -f hook_post_cell >/dev/null && hook_post_cell "$1"
 }
 
 # ===== DRY_RUN: print the assembled launch surface and exit (no kubectl, no writes) =====

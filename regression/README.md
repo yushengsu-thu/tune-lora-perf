@@ -68,7 +68,7 @@ a review red flag. Each model is a four-piece pack:
 |------|------|
 | `model.env` | **VALUES** — topology (NNODES/TP/EP), paths, common flags, the `BASE_*`/`VARIANT_*` cell block, bench/profile recipe, tolerances |
 | `pod.yaml` | K8s spec, applied with `${ID}` substituted (parallel runs don't collide) |
-| `hooks.sh` | **LOGIC** — optional `hook_post_setup` / `hook_between_cells` / `hook_post_checkout` |
+| `hooks.sh` | **LOGIC** — optional `hook_post_setup` / `hook_between_cells` / `hook_post_checkout` (also restores the laptop JIT cache) / `hook_post_cell` (saves it) |
 | `MODEL.md` | **KNOWLEDGE** — env-var matrix (required/forbidden), expected numbers, warmup timings, platform deltas |
 
 Adding a model = a new `<platform>/models/<m>/` pack + a thin `run_<m>.sh` wrapper. Zero edits
@@ -254,6 +254,16 @@ KUBECONFIG=<gcp-radixark-02 kubeconfig> \
 |---|---|
 | **Input** | the node that just built the cache (full name or suffix); auto-discovers all other schedulable GB300 nodes (skips `gpu-maintenance`-tainted and DiskPressure nodes) |
 | **Output** | `/mnt/stateful_partition/sglang-dot-cache` replicated to every target node — **in-cluster direct transfer**: the source sync pod serves the tarball over the pod network (HTTP), all targets pull **in parallel** with size+gzip verification; data never leaves the cluster (validated 2026-06-06: 1.27GB → 16 nodes in minutes, vs ~3h for the old local-relayed 20MB-chunk path) |
+
+> **Laptop JIT-cache store (durable, automatic).** Separately from the node→node broadcast, the
+> gb300 `hooks.sh` (`hook_post_checkout` / `hook_post_cell`) **restore** a per-cell warm cache before
+> each launch and **save** the freshly-compiled cache to the laptop after each cell — via the shared
+> `../dev/jit_store.sh` (one fp-keyed store per model under `dev/models/<model>/jit-cache/`, shared
+> with the dev loop + e2e). It captures only the compile output (`deep_gemm`, `tvm-ffi` sgl_kernel
+> JIT, `flashinfer`, …; ~13MB), keyed by the code fingerprint so the base and variant cells keep
+> separate caches. This survives **every** node going cold / re-imaged (the broadcast can't — it
+> needs a still-warm source node). Nothing to run by hand; `DRY`/manual use:
+> `bash ../dev/jit_store.sh save|restore <model> <pod> --context gcp-radixark-02`.
 
 ### `prompts_check.py` — ad-hoc decode health check on any live server
 

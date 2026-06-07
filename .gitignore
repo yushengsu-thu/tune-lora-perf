@@ -2,3 +2,8 @@
 *.pyc
 dev/.state/
 dev/results/
+# Saved JIT/autotune cache blobs (node->laptop store, fp-keyed, ~13MB each; rebuilt by
+# 8_save_jit_cache.sh / jit_store.sh). The .meta + INDEX sidecars ARE tracked (small text: which
+# code fingerprint/node each cache came from). To share a blob across machines, force-add it:
+#   git add -f dev/models/<model>/jit-cache/<fp>.tgz
+dev/models/*/jit-cache/*.tgz

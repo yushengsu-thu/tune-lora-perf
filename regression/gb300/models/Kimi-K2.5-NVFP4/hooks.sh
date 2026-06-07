@@ -2,6 +2,12 @@
 # they run with the driver's variables in scope: PODS, kh/kp, LOCAL_OUT, MODEL_PATH, ...).
 # Only define the hooks this model needs; the driver calls them ONLY if defined.
 
+# Laptop-side JIT/autotune cache store (the SAME dev/jit_store.sh used by the dev loop + e2e; one
+# fp-keyed store per model under dev/models/<model>/jit-cache/). Restore on checkout / save after
+# each cell. NOTE: kimi's fp4 autotune is PROCESS-LOCAL (re-tunes every launch) — this caches its
+# JIT kernels (moe_fused_gate / moe_lora / custom_all_reduce / ...), NOT the fp4 autotune.
+JIT_STORE_SH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../dev" 2>/dev/null && pwd)/jit_store.sh"
+
 # hook_between_cells — called at the START of every run_cell (before that cell's first launch).
 #
 # GB200 ghost-HBM (kimi-regression robustness #10): after a prior run loaded weights + wrote big
@@ -32,8 +38,20 @@ hook_between_cells(){
 # Remove this hook (and the image digest pin in pod.yaml) when the PR rebases onto 0.6.12.
 hook_post_checkout(){
   local P
-  [ -n "${FLASHINFER_PIN:-}" ] || return 0
-  for P in "${PODS[@]}"; do
-    kp "$P" "pip install -q \"flashinfer_python[cu13]==${FLASHINFER_PIN}\" \"flashinfer_cubin==${FLASHINFER_PIN}\" 2>&1 | tail -1; python3 -c 'import flashinfer; print(\"  [hook] flashinfer\", flashinfer.__version__)'"
+  if [ -n "${FLASHINFER_PIN:-}" ]; then
+    for P in "${PODS[@]}"; do
+      kp "$P" "pip install -q \"flashinfer_python[cu13]==${FLASHINFER_PIN}\" \"flashinfer_cubin==${FLASHINFER_PIN}\" 2>&1 | tail -1; python3 -c 'import flashinfer; print(\"  [hook] flashinfer\", flashinfer.__version__)'"
+    done
+  fi
+  # warm-start: restore the laptop JIT cache for THIS cell's code (fp-gated; no-op if none saved)
+  [ -f "$JIT_STORE_SH" ] && for P in "${PODS[@]}"; do
+    bash "$JIT_STORE_SH" restore "$MODEL_NAME" "$P" --context gcp-radixark-02 2>&1 | sed 's/^/  [hook] /'
   done
+}
+
+# hook_post_cell — called at the END of every run_cell. Save this cell's freshly-compiled JIT
+# kernels to the laptop store (fp-keyed; skips if already saved). fp4 autotune is not cacheable.
+hook_post_cell(){
+  [ -f "$JIT_STORE_SH" ] || return 0
+  bash "$JIT_STORE_SH" save "$MODEL_NAME" "$HEAD_POD" --context gcp-radixark-02 2>&1 | sed 's/^/  [hook] /'
 }

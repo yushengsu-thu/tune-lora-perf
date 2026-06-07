@@ -1,0 +1,7 @@
+model=Qwen3.5-35B-A3B-FP8
+fingerprint=5e8f06220d4347038994b66f0f699f3bf9cf2319e7f97ed3eb5481a2501a0c3b
+size_bytes=13520691
+flashinfer_pin=0.6.11.post1
+saved_from_pod=sglang-gb300-qwen35-yushengsu-jitverify-20260607
+saved_node=gke-gcp-radixark-02-a4x-260102-05-ec94d7c6-qtbb
+excludes=huggingface pip uv

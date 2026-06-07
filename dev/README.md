@@ -12,18 +12,23 @@ chain (`run_all.sh`) stops at the first problem. Pod specs default to the valida
 ```
 dev/
 ├── common.sh            # model-agnostic config + proven launch/wait/kill helpers
+├── jit_store.sh         # ★ shared laptop JIT-cache store (sourced by common.sh; CLI for regression/e2e)
+├── jit_fp.cmd           # the compile-input fingerprint command (single source of truth)
 ├── models/              # ★ one dir per model = ${MODEL_NAME}-${PRECISION}
-│   ├── Qwen3.5-35B-A3B-FP8/model.env    # ALL qwen params (tp/ep, paths, flags, envs, recipes)
-│   └── Kimi-K2.5-NVFP4/model.env        # ALL kimi params
+│   ├── Qwen3.5-35B-A3B-FP8/
+│   │   ├── model.env                    # ALL qwen params (tp/ep, paths, flags, envs, recipes)
+│   │   └── jit-cache/<fp>.tgz           # saved compile cache per code fingerprint (+ .meta, INDEX)
+│   └── Kimi-K2.5-NVFP4/{model.env,jit-cache/}
 ├── 1_launch_node.sh     # launch pod(s), wait for weights+install, verify GPUs
-├── 2_upload_code.sh     # push the CURRENT local sglang branch to the pods + pip install -e
+├── 2_upload_code.sh     # push the CURRENT local sglang branch + pip install -e + RESTORE warm cache
 ├── 3_run_benchmark.sh   # LoRA vs no-LoRA bench → input/extend, decode, e2e table
 ├── 4_run_acc.sh         # LoRA vs no-LoRA accuracy → per-token logprob diff vs ACC_TOL
 ├── 5_run_profile.sh     # LoRA vs no-LoRA torch profiles → <DATE>-<TIME>/{lora,no-lora}/
 ├── 6_upload_results.sh  # push the run dir to github.com/<you>/lora_perf_lora_profile
-├── 7_broadcast_jit_cache.sh  # (optional) copy this node's JIT cache to ALL GB300 nodes
-├── run_all.sh           # the whole chain: run_all.sh <model|all>
-├── .state/<model>.env   # pod ID + RUN_DIR handoff between steps (written by 1, read by 2-6)
+├── 7_broadcast_jit_cache.sh  # (optional) copy this node's JIT cache to ALL GB300 nodes (node→node)
+├── 8_save_jit_cache.sh  # SAVE the node's compiled JIT cache to dev/models/<m>/jit-cache/ (node→laptop)
+├── run_all.sh           # the whole chain: run_all.sh <model|all>  (now ends with step 8)
+├── .state/<model>.env   # pod ID + RUN_DIR handoff between steps (written by 1, read by 2-8)
 └── results/<model>/<DATE>-<TIME>/   # everything a run produces, locally
 ```
 
@@ -88,9 +93,9 @@ each = 6 launches total) — that's the price of standalone, individually-rerunn
 | | |
 |---|---|
 | input | state from step 1; `$SGLANG_SRC` current branch (committed HEAD; dirty tree ⇒ warning) |
-| does | thin git bundle (only commits the pod lacks) → `kubectl cp` → checkout on every pod → `pip install -e python` → re-pin flashinfer `0.6.11.post1` (image-matching JIT cache) → **JIT-cache reusability check**: fingerprint the compile-relevant inputs (flashinfer/torch versions + every `*.cu/cuh/cpp/h` / `jit`/`kernel` source) and compare against the node cache's `jit_stamp` — **match = no recompile, the warm cache is reusable as-is; mismatch = the next launch recompiles the changed kernels** (then re-broadcast with step 7). The stamp is written automatically after every successful launch and travels with the broadcast |
-| output | every pod's `/root/sglang` at your local HEAD |
-| verify | in-pod `git rev-parse HEAD` == local HEAD + `import sglang` succeeds, per pod (the stamp check is informational) |
+| does | thin git bundle (only commits the pod lacks) → `kubectl cp` → checkout on every pod → `pip install -e python` → re-pin flashinfer `0.6.11.post1` (image-matching JIT cache) → **laptop JIT-cache RESTORE**: fingerprint the compile-relevant inputs (flashinfer/torch versions + every `*.cu/cuh/cpp/h` / `jit`/`kernel` source); if `dev/models/<model>/jit-cache/<fp>.tgz` exists for that fingerprint, **extract it into every pod's `/root/.cache`** so the launch skips the >30-min cold sm_103 JIT. No saved cache for this code (compile inputs changed / first time) → the next launch JIT-compiles, then **step 8** saves a new fp-keyed tarball |
+| output | every pod's `/root/sglang` at your local HEAD; warm `/root/.cache` when a matching cache was saved |
+| verify | in-pod `git rev-parse HEAD` == local HEAD + `import sglang` succeeds, per pod (the restore is best-effort: a miss just means the launch compiles) |
 
 ### 3. `3_run_benchmark.sh <model>` — LoRA vs no-LoRA benchmark
 
@@ -159,10 +164,38 @@ a compile input, and after the next successful launch the refreshed cache+stamp 
 step broadcasts). Kimi's fp4 autotune is process-local and can't be cached — only its JIT
 kernels benefit.
 
+### 8. `8_save_jit_cache.sh <model>` — save the compiled cache to the laptop (node → laptop)
+
+Downloads the node's freshly-compiled cache into the **per-model laptop store**
+`dev/models/<model>/jit-cache/<fp>.tgz`, **keyed by the fingerprint of the code that built it**.
+It captures only the **compile output** — `deep_gemm` autotune, `tvm-ffi` (the sgl_kernel JIT:
+`moe_fused_gate` / `moe_lora` / `custom_all_reduce` / `topk_softmax` / …), `flashinfer`, `sglang`,
+`torch` (and `triton` / `trtllm_lora_temp` when present) — and **excludes** the `huggingface`
+(~658M) + `pip` (~1.1G) download caches: ~13MB gzip, which streams fine over `kubectl exec` (the
+multi-GB in-cluster broadcast in step 7 is only needed for the FULL cache). Run it after a
+successful run, while the pods still exist; it **skips** if that fingerprint is already saved
+(`FORCE=1` overwrites). On the next `2_upload_code.sh`, if the code's compile inputs are unchanged,
+that step **restores** this tarball so the launch is warm.
+
+> **Steps 7 vs 8 (both warm future launches, different reach):** step 7 broadcasts a still-warm
+> node's cache to the OTHER GB300 nodes **in-cluster** (node→node — breadth *now*). Step 8 saves it
+> to the **laptop** (node→laptop — durability): it survives every node going cold / re-imaged / the
+> pods being deleted, and re-warms a *fresh* pod on the next push. Use both. The cache extracts to
+> the SAME in-pod path (`/root/.cache`) on every node, so it is byte-relocatable; flashinfer/
+> deep_gemm/tvm-ffi key kernels by content hash, so a restore is never *incorrect* — at worst the
+> launch recompiles the kernels that actually changed. Kimi's fp4 autotune is process-local and
+> can't be cached — only its JIT kernels benefit.
+
+The store is **shared** with the regression driver and the e2e GB300 scripts via `dev/jit_store.sh`
+(`jit_store.sh save|restore|fits <model> <pod> [--context CTX]`) — one fp-keyed store per model
+warms all three flows. The `<fp>.tgz` blobs are gitignored (force-add to share across machines);
+the `<fp>.meta` + `INDEX` sidecars are tracked.
+
 ### `run_all.sh <model|all>` — everything
 
-Runs 1→2→3→4→5→6; each step's own verification gates the next; first failure aborts.
-(7 is manual — broadcast when the cache changed.)
+Runs 1→2→3→4→5→6→8; each step's own verification gates the next; first failure aborts. Step 8
+saves the freshly-compiled cache at the end so the next push lands warm.
+(7 is manual — broadcast when you want to warm the *other* nodes too.)
 
 ## Notes
 

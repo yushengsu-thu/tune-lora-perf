@@ -1,0 +1,1 @@
+cd /root/sglang && { python3 -c "import flashinfer,torch;print(flashinfer.__version__,torch.__version__)" 2>/dev/null; git ls-files | grep -E "\.(cu|cuh|cpp|cc|h|hpp)$|jit|kernel" | sort | xargs -r sha256sum; } | sha256sum | cut -d" " -f1

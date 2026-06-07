@@ -34,6 +34,7 @@ checkout (the GB200 flow never reinstalled; use it when the ref's deps changed).
 | `Qwen3.5-35B-A3B-FP8_base_gb300.sh` | `bash Qwen3.5-35B-A3B-FP8_base_gb300.sh <TAG>` — oss no-LoRA ceiling (%-denominator) |
 | `Qwen3.5-35B-A3B-FP8_tp1_gb300.sh` | `bash Qwen3.5-35B-A3B-FP8_tp1_gb300.sh <full-lora-opti\|main-base> <TAG>` |
 | `Kimi-K2.5-NVFP4_run_gb300.sh` | `bash Kimi-K2.5-NVFP4_run_gb300.sh <worker\|head> <full-lora-opti\|main> <LORA> <BACKEND> <DISTADDR\|-> <TAG> <full\|gsm8k_only>` — `-` = the Kimi-K2.5-NVFP4-gb300.yaml head FQDN. **Worker FIRST, then head.** |
+| `jit_cache.sh` | `bash jit_cache.sh <restore\|save> <model> <pod> [git-url branch]` — laptop JIT-cache warm-start/save (wrapper over `../../dev/jit_store.sh`); skips the cold sm_103 JIT on a fresh pod |
 
 ## Run order (qwen, one 4-GPU pod)
 
@@ -44,17 +45,34 @@ for f in gsm8k_lora.py bench_report.py prompts_check.py; do
   kubectl --context gcp-radixark-02 exec -i <pod> -- bash -c "mkdir -p /tmp/flo_helpers; cat > /tmp/flo_helpers/$f" < ../$f
 done
 kubectl --context gcp-radixark-02 exec -i <pod> -- bash -c 'cat > /tmp/Qwen3.5-35B-A3B-FP8_run_gb300.sh' < Qwen3.5-35B-A3B-FP8_run_gb300.sh
+# OPTIONAL JIT warm-start — skips the >30-min cold sm_103 JIT if a matching cache was saved before.
+# Checks out the ref on the pod, then restores dev/models/<model>/jit-cache/<fp>.tgz; the run
+# script's own checkout is then a no-op and its launch lands warm:
+bash jit_cache.sh restore qwen <pod> https://github.com/yushengsu-thu/sglang trtllm-lora-bf16
 # fire detached (runbook §5): setsid bash /tmp/Qwen3.5-35B-A3B-FP8_run_gb300.sh full-lora-opti g300pr > /tmp/run.log 2>&1
 # then the same pod sequentially: Qwen3.5-35B-A3B-FP8_run_gb300.sh main / Qwen3.5-35B-A3B-FP8_base_gb300.sh
+# AFTER a successful run, save the freshly-compiled cache to the laptop store (fp-keyed):
+bash jit_cache.sh save qwen <pod>
 ```
+
+> **JIT cache (compile parts) — `jit_cache.sh`:** a thin wrapper over the shared store
+> `../../dev/jit_store.sh` (one fp-keyed cache per model under `dev/models/<model>/jit-cache/`,
+> reused by the dev loop, the regression driver, and these e2e scripts). `restore` warms a fresh pod
+> (skipping the cold compile of `moe_fused_gate` / `moe_lora` / `custom_all_reduce` / `deep_gemm` /
+> `trtllm_lora_temp`); `save` captures it after a run. The cache also persists per node via the
+> `dot-cache` hostPath and spreads node→node via
+> `../../regression/gb300/models/Qwen3.5-35B-A3B-FP8/broadcast_jit_cache.sh`; the laptop store is the
+> durable copy that survives every node going cold / re-imaged.
 
 ## Kimi run order
 
 ```bash
 kubectl --context gcp-radixark-02 apply -f Kimi-K2.5-NVFP4-gb300.yaml      # svc + CD + 2 pods
 # ~600G download per pod — watch /root/setup.log on both. Then per cell:
+#   0. (optional) warm-start BOTH pods:  bash jit_cache.sh restore kimi <head-pod>; bash jit_cache.sh restore kimi <worker-pod>
 #   1. worker pod:  bash /tmp/Kimi-K2.5-NVFP4_run_gb300.sh worker <REF> <LORA> <BACKEND> - <TAG> full
 #   2. head pod:    bash /tmp/Kimi-K2.5-NVFP4_run_gb300.sh head   <REF> <LORA> <BACKEND> - <TAG> full
+#   3. (after) save the JIT kernels (fp4 autotune is NOT cacheable):  bash jit_cache.sh save kimi <head-pod>
 ```
 
 ## Guardrails (unchanged from `../README.md`)
