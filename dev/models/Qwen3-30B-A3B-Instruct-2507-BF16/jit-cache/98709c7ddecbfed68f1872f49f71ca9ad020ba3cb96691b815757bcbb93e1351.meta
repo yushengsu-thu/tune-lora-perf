@@ -1,0 +1,7 @@
+model=Qwen3-30B-A3B-Instruct-2507-BF16
+fingerprint=98709c7ddecbfed68f1872f49f71ca9ad020ba3cb96691b815757bcbb93e1351
+size_bytes=14608690
+flashinfer_pin=0.6.11.post1
+saved_from_pod=sglang-gb300-qwen330-yushengsu-bf16test-20260607
+saved_node=gke-gcp-radixark-02-a4x-260102-05-ec94d7c6-6zvh
+excludes=huggingface pip uv
