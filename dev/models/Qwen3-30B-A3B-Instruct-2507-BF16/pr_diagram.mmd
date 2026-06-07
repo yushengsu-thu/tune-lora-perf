@@ -1,0 +1,37 @@
+%% Two-stream LoRA overlap flow — source: https://github.com/sgl-project/sglang/pull/26602
+%% NOTE: this depicts the FP8 path; for bf16 there is NO per_token_group_quant_fp8 step —
+%% state the bf16 deltas in text below the diagram when embedding in a PR.
+sequenceDiagram
+    autonumber
+    participant M as Main CUDA stream
+    participant S as LoRA side stream
+
+    Note over M,S: --- Attention block ---
+    par O7: shrink on side
+        S->>S: sgemm_lora_a_fwd<br/>(qkv shrink)
+    and base GEMM on main
+        M->>M: qkv_proj quant_method.apply
+    end
+    S-->>M: join
+    M->>M: qkv_lora_b_fwd (expand + atomic-add)
+    M->>M: FlashAttention (fmha)
+    par O8: shrink on side
+        S->>S: sgemm_lora_a_fwd<br/>(o_proj shrink)
+    and base GEMM on main
+        M->>M: o_proj quant_method.apply
+    end
+    S-->>M: join
+    M->>M: sgemm_lora_b_fwd (expand + atomic-add)
+    M->>M: tensor_model_parallel_all_reduce
+
+    Note over M,S: --- MoE block ---
+    par O1: gate_up LoRA on side
+        S->>S: merged_experts_fused_moe_lora_add<br/>(gate_up shrink + expand)<br/>→ gate_up_lora_delta
+    and main: quant + trtllm routing/GEMM1
+        M->>M: per_token_group_quant_fp8
+        M->>M: trtllm op<br/>routing → permute → GEMM1
+    end
+    S-->>M: join (CUDA event) before activation
+    M->>M: trtllm op (cont.)<br/>activation(+gate_up_lora_delta)<br/>→ GEMM2 → finalize → moe_result
+    M->>M: merged_experts_fused_moe_lora_add<br/>(down LoRA shrink+expand, atomic-add to moe_result)
+    M->>M: downstream all_reduce (in qwen3_moe)
