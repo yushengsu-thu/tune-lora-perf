@@ -48,6 +48,27 @@ for _v in NNODES TP EP GPUS_PER_NODE POD_PREFIX MODEL_PATH LORA_PATH SERVER_COMM
 done
 [ "$NNODES" -le 1 ] || [ -n "${DIST_PORT:-}" ] || { echo "ERROR: NNODES>1 requires DIST_PORT in ${MODEL_DIR}/model.env" >&2; exit 1; }
 ENV_COMMON="${ENV_COMMON:-}"
+
+# ---------- dummy LoRA: a model.env may set LORA_PATH=dummy (or dummy:<rank>) ----------
+# Meaning: "no real adapter — generate a random-init, full-coverage mock on /data so the LoRA
+# path can be perf-tested." We resolve the marker to a canonical /data path, patch LORA_EXTRA's
+# --lora-paths token to it, and set LORA_IS_DUMMY=1 (the launch step then generates it on each
+# pod via gen_dummy_lora.py). A real LORA_PATH is left untouched (LORA_IS_DUMMY=0) — a specified
+# adapter is always used verbatim; we never overwrite or synthesize over it.
+LORA_IS_DUMMY=0
+DUMMY_LORA_TARGETS="${DUMMY_LORA_TARGETS:-q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj}"
+case "$LORA_PATH" in
+  dummy|dummy:*)
+    DUMMY_LORA_RANK="${LORA_PATH#dummy}"; DUMMY_LORA_RANK="${DUMMY_LORA_RANK#:}"
+    # default rank follows the server's --max-lora-rank so the mock fits the configured buffers
+    [ -n "$DUMMY_LORA_RANK" ] || DUMMY_LORA_RANK=$(printf %s "$LORA_EXTRA" | sed -n 's/.*--max-lora-rank \([0-9][0-9]*\).*/\1/p')
+    [ -n "$DUMMY_LORA_RANK" ] || DUMMY_LORA_RANK=16
+    _dummy_real="/data/${MODEL}-dummy-lora-r${DUMMY_LORA_RANK}"
+    LORA_EXTRA="${LORA_EXTRA/${LORA_NAME}=${LORA_PATH}/${LORA_NAME}=${_dummy_real}}"
+    LORA_PATH="$_dummy_real"; LORA_IS_DUMMY=1
+    echo "== [dummy-lora] LORA_PATH=dummy -> generate r${DUMMY_LORA_RANK} mock at ${LORA_PATH}" >&2
+    ;;
+esac
 # pod spec defaults to the validated regression pack's yaml; override PACK/POD_YAML in model.env
 PACK="${PACK:-${ROOT_DIR}/regression/gb300/models/${MODEL}}"
 POD_YAML="${POD_YAML:-${PACK}/pod.yaml}"
@@ -127,6 +148,22 @@ wait_ready(){
     sleep 10
   done
   echo "  TIMEOUT after ${READY_TIMEOUT_MIN}min"; return 1
+}
+
+# ---------- dummy LoRA generation (only when LORA_IS_DUMMY=1) ----------
+# Generates the random-init mock adapter at $LORA_PATH on EVERY pod's /data (hostPath is per-node,
+# so each node needs its own copy). Idempotent: gen_dummy_lora.py no-ops if the adapter is present.
+# Runs the generator by piping dev/gen_dummy_lora.py to the pod's python (no file upload needed).
+ensure_dummy_lora(){
+  [ "${LORA_IS_DUMMY:-0}" = 1 ] || return 0
+  local P
+  for P in "${PODS[@]}"; do
+    echo "-- [dummy-lora] ensuring ${LORA_PATH} on ${P}"
+    $KC exec -i "$P" -- bash -lc "DL_OUT='${LORA_PATH}' DL_BASE='${MODEL_PATH}' \
+        DL_RANK='${DUMMY_LORA_RANK}' DL_ALPHA='${DUMMY_LORA_RANK}' \
+        DL_TARGETS='${DUMMY_LORA_TARGETS}' python3 -" < "${DEV_DIR}/gen_dummy_lora.py" \
+      || { echo "ERROR: dummy LoRA generation failed on ${P}" >&2; return 1; }
+  done
 }
 
 start_rank(){  # $1=pod $2=node-rank $3=envs $4=flags  (server FOREGROUND in exec, LOCAL exec backgrounded)

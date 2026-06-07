@@ -1,0 +1,128 @@
+---
+# Qwen3-30B-A3B-Instruct-2507 (BF16) dev pod — GB300 (sm_103), SINGLE node, 4 GPU (TP=4, EP=4).
+# Target cluster: gcp-radixark-02 (GKE, a4x-maxgpu-4g-metal / nvidia-gb300).
+# Self-contained dev pod (no regression pack for this model). Derived from
+# ../../../regression/gb300/models/Qwen3.5-35B-A3B-FP8/pod.yaml — same cluster conventions:
+#   * NO runtimeClassName / NO privileged (GKE; torch profiler works without it)
+#   * radixark.io/cohort toleration (free gb300 nodes carry it)
+#   * hostPath on /mnt/stateful_partition (node's 95G persistent NVMe): /root/.cache (JIT/autotune
+#     cache) + /data (weights — no per-pod re-download). NOTE: the bf16 base is ~60G; a node that
+#     already caches the 40G FP8 qwen35 may be tight on the 95G partition (watch setup.log).
+#   * dev step 2 overwrites /root/sglang with your uploaded branch; the baseline reset below just
+#     gives a deterministic starting commit (the trtllm-lora-bf16 HEAD = this task branch's base),
+#     so step 2's thin bundle is empty/minimal.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sglang-gb300-qwen330-yushengsu-${ID}
+  labels:
+    app: sglang-gb300-qwen330-yushengsu-${ID}
+spec:
+  tolerations:
+  - key: "kubernetes.io/arch"
+    operator: "Equal"
+    value: "arm64"
+    effect: "NoSchedule"
+  - key: "nvidia.com/gpu"
+    operator: "Exists"
+    effect: "NoSchedule"
+  - key: "radixark.io/cohort"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+  containers:
+  - name: sglang
+    # Same dated nightly as the rest of the GB300 flows (immutable; ships flashinfer-jit-cache
+    # 0.6.11.post1+cu130 == FLASHINFER_PIN, sglang @83bc77661).
+    image: lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766
+    imagePullPolicy: IfNotPresent
+    command:
+    - /bin/sh
+    - -c
+    - |
+      set -e
+      cat > /root/setup.sh <<'SETUP'
+      #!/bin/bash
+      set -o pipefail
+      log(){ echo "[setup $(date -u +%H:%M:%S)] $*"; }
+      log "ensuring numactl is present (keeps page cache off HBM NUMA nodes)"
+      command -v numactl >/dev/null 2>&1 || { apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq numactl; } || true
+      log "installing hf_xet + hf_transfer download accelerators"
+      pip install --quiet "huggingface_hub[hf_xet,hf_transfer]" hf_xet hf_transfer || true
+      if [ -f "$HOME/.cargo/env" ]; then grep -q 'cargo/env' ~/.bashrc 2>/dev/null || echo '. "$HOME/.cargo/env"' >> ~/.bashrc; . "$HOME/.cargo/env"; fi
+      if [ -d /root/sglang/.git ]; then
+        log "updating /root/sglang -> trtllm-lora-bf16 baseline"; cd /root/sglang
+        git remote set-url origin https://github.com/yushengsu-thu/sglang.git 2>/dev/null || true
+        # Deterministic baseline = the trtllm-lora-bf16 HEAD (= this task branch's base). dev step 2
+        # then uploads the actual task branch on top.
+        git fetch origin c9f582a272dcc7109bf7da584867f47995602035 && git reset --hard c9f582a272dcc7109bf7da584867f47995602035
+      else
+        log "cloning sglang"; rm -rf /root/sglang && git clone https://github.com/yushengsu-thu/sglang /root/sglang; cd /root/sglang
+        git fetch origin c9f582a272dcc7109bf7da584867f47995602035 && git reset --hard c9f582a272dcc7109bf7da584867f47995602035
+      fi
+      log "pip install -e /root/sglang/python (a few minutes)"; cd /root/sglang && pip install -e python
+      # Weights persist on /data (hostPath -> the node's stateful partition); flock makes a
+      # concurrent same-node run WAIT, not clobber. ~60G bf16 base; PUBLIC model (no token needed).
+      mkdir -p /data/Qwen3-30B-A3B-Instruct-2507
+      (
+        flock 9
+        if [ ! -f /data/Qwen3-30B-A3B-Instruct-2507/config.json ]; then
+          log "downloading Qwen/Qwen3-30B-A3B-Instruct-2507 -> /data (persistent, ~60G bf16)"
+          numactl --membind=0,1 hf download Qwen/Qwen3-30B-A3B-Instruct-2507 --local-dir /data/Qwen3-30B-A3B-Instruct-2507
+        else log "reusing cached /data/Qwen3-30B-A3B-Instruct-2507"; fi
+      ) 9>/data/.qwen330-download.lock
+      # The LoRA adapter is a DUMMY (random-init mock) generated post-launch by the dev loop's
+      # ensure_dummy_lora (dev/gen_dummy_lora.py) — nothing to download here.
+      touch /root/.setup-done; log "setup complete"
+      SETUP
+      chmod +x /root/setup.sh
+      ( /root/setup.sh > /root/setup.log 2>&1 ) &
+      sleep infinity
+    env:
+    - name: PATH
+      value: "/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    - name: LD_LIBRARY_PATH
+      value: "/usr/local/nvidia/lib64"
+    - name: NVIDIA_DISABLE_REQUIRE
+      value: "true"
+    - name: MALLOC_TRIM_THRESHOLD_
+      value: "131072"
+    - name: HF_HUB_ENABLE_HF_TRANSFER
+      value: "1"
+    - name: HF_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: hf-token-yanbin
+          key: token
+          optional: true
+    resources:
+      requests:
+        nvidia.com/gpu: 4
+        memory: "100Gi"
+        cpu: "8"
+        ephemeral-storage: "60Gi"
+      limits:
+        nvidia.com/gpu: 4
+        memory: "850Gi"
+        cpu: "64"
+        ephemeral-storage: "1500Gi"
+    volumeMounts:
+    - name: shm
+      mountPath: /dev/shm
+    - name: dot-cache
+      mountPath: /root/.cache
+    - name: data
+      mountPath: /data
+  volumes:
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 128Gi
+  - name: dot-cache
+    hostPath:
+      path: /mnt/stateful_partition/sglang-dot-cache
+      type: DirectoryOrCreate
+  - name: data
+    hostPath:
+      path: /mnt/stateful_partition/sglang-data
+      type: DirectoryOrCreate

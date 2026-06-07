@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 1. Launch the GB300 node/pod(s) for <model> and wait until fully set up.
-#    Input : model name (a dir under dev/models/, or a unique prefix like qwen|kimi).
+#    Input : model name = an exact dir under dev/models/ (Qwen3.5-35B-A3B-FP8 | Kimi-K2.5-NVFP4),
+#            or any unique case-insensitive prefix of one (e.g. qwen, kimi).
 #            Optional env ID=<dns-safe id> (default: date +%Y%m%d-%H%M%S).
 #    Output: Ready pod(s) with weights downloaded + sglang installed; pod identity saved to
 #            dev/.state/<model>.env (read by every later step).
@@ -62,6 +63,11 @@ for P in "${PODS[@]}"; do
   [ "${n:-0}" -ge "$GPUS_PER_NODE" ] || { echo "ERROR: $P sees ${n:-0}/<${GPUS_PER_NODE} GPUs"; exit 1; }
   echo "  $P: $n GPUs OK"
 done
+
+# If model.env requested a dummy LoRA (LORA_PATH=dummy), generate the mock adapter on each pod's
+# /data now — base config is downloaded (setup done) and it must exist before any lora-cell launch.
+# No-op (returns 0) when a real LORA_PATH was specified.
+ensure_dummy_lora || { echo "ERROR: dummy LoRA setup failed"; exit 1; }
 
 save_state "ID=${ID}"   # fresh launch resets the run state (RUN_DIR is created by step 3/4)
 echo "== [1/launch] PASS — state saved to ${STATE}"
