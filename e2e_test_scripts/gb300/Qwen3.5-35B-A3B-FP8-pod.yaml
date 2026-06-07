@@ -6,9 +6,11 @@
 #   * cohort toleration (free gb300 nodes carry radixark.io/cohort=true:NoSchedule)
 #   * hostPath on /mnt/stateful_partition (95G persistent NVMe): /root/.cache (JIT cache —
 #     kills the >30-min cold sm_103 trtllm_lora_temp build on relaunch) + /data (weights)
-#   * image PINNED by digest + flashinfer re-pinned to 0.6.11.post1 in setup: the floating
-#     dev-cu13 tag and the branch pyproject's flashinfer 0.6.12 both changed
-#     get_sf_out_offset_* signatures -> trtllm_lora_temp JIT compile error on sm_103.
+#   * image PINNED to the dated nightly lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766 +
+#     flashinfer re-pinned to 0.6.11.post1 in setup: the floating dev-cu13 tag and the branch
+#     pyproject's flashinfer 0.6.12 both changed get_sf_out_offset_* signatures ->
+#     trtllm_lora_temp JIT compile error on sm_103. The dated tag ships flashinfer-jit-cache
+#     0.6.11.post1+cu130 (== the re-pin) + sglang @83bc77661.
 # Launch: ID=$(date +%Y%m%d-%H%M%S) envsubst < Qwen3.5-35B-A3B-FP8-pod.yaml | kubectl --context gcp-radixark-02 apply -f -
 apiVersion: v1
 kind: Pod
@@ -33,9 +35,9 @@ spec:
     effect: "NoSchedule"
   containers:
   - name: sglang
-    # Pinned digest: PR's trtllm_lora_temp JIT compiles against this build's tensorrt_llm
+    # Pinned dated nightly: PR's trtllm_lora_temp JIT compiles against this build's tensorrt_llm
     # headers (see header note). Re-pin/un-pin when the PR rebases onto current flashinfer.
-    image: lmsysorg/sglang@sha256:97e7cd699dc879b56bc9f7a11f25c060fa4a6137e901a637f4378e9b01607a01
+    image: lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766
     imagePullPolicy: IfNotPresent
     command:
     - /bin/sh

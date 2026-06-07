@@ -9,12 +9,20 @@ hardware-agnostic — deploy the ones from `../` unchanged.** Validated end-to-e
 
 Every step: `kubectl config use-context gcp-radixark-02` (or `--context gcp-radixark-02`).
 
+## Codebase & image
+
+| | |
+|---|---|
+| **Docker image** | `lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766` (pinned dated nightly in every `*-pod*.yaml` / `*-gb300.yaml`; ships flashinfer-jit-cache `0.6.11.post1+cu130`, torch `2.11.0+cu130`, py3.12, sglang `@83bc77661`). |
+| **sglang codebase** | the run scripts `git fetch` + check out **`trtllm-lora-bf16`** from [`github.com/yushengsu-thu/sglang`](https://github.com/yushengsu-thu/sglang) inside the pod (both the `full-lora-opti` and `main` refs currently point at this branch — edit `URL`/`BR` in the `*_run_gb300.sh` to change). |
+| **flashinfer** | each run script re-pins to `0.6.11.post1` after checkout (matches the image's baked jit-cache; `FLASHINFER_PIN` env to override). `REINSTALL=1` re-runs `pip install -e python` too. |
+
 ## What changed vs GB200 (and why)
 
 | delta | reason |
 |---|---|
 | pod specs: no `runtimeClassName`, `radixark.io/cohort=true:NoSchedule` toleration, hostPath on `/mnt/stateful_partition` (95G persistent NVMe) | GKE cluster conventions — copied from `../../regression/gb300/models/Qwen3.5-35B-A3B-FP8/pod.yaml` and verified against working pods on the cluster |
-| image **pinned by digest** `97e7cd69…` + `flashinfer==0.6.11.post1` re-pin (setup + per-run guard in scripts; `FLASHINFER_PIN` env to override) | floating `dev-cu13` / the branch pyproject's flashinfer 0.6.12 changed `get_sf_out_offset_*` signatures → `trtllm_lora_temp` JIT compile error on sm_103. Re-pin when the PR rebases. |
+| image **pinned to the dated nightly** `lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766` + `flashinfer==0.6.11.post1` re-pin (setup + per-run guard in scripts; `FLASHINFER_PIN` env to override) | floating `dev-cu13` / the branch pyproject's flashinfer 0.6.12 changed `get_sf_out_offset_*` signatures → `trtllm_lora_temp` JIT compile error on sm_103. The dated tag is immutable and ships flashinfer-jit-cache 0.6.11.post1+cu130 (== the re-pin) + sglang `@83bc77661`. Re-pin when the PR rebases. |
 | READY waits: qwen 35→45 min, tp1 25→45 min, kimi 36→48 min | first sm_103 cold JIT exceeded 30 min on the 2026-06-06 regression validation; warm-cache relaunch ≈8 min. Cache persists per node via the `dot-cache` hostPath — broadcast it with `../../regression/gb300/models/Qwen3.5-35B-A3B-FP8/broadcast_jit_cache.sh` |
 | `SGLANG_OPT_LORA_DOWN_FINALIZE_OVERLAP` **removed** from `Qwen3.5-35B-A3B-FP8_run_gb300.sh`'s PR opt set | the runbook guardrail says NEVER set it (corrupts base / decode garbage) — the GB200 script still carried it; bug fixed in this port |
 | PR moe backend parameterized: `PRBACKEND` (default `experimental_sgl_trtllm`) | verified on `full-lora-opti@ac51ef5ed` (2026-06-06): the old `sgl_flashinfer_trtllm` name is gone from the choices — the rebased branch uses the post-PR-#27329-merge naming. Override `PRBACKEND` for older refs. |
@@ -35,6 +43,8 @@ checkout (the GB200 flow never reinstalled; use it when the ref's deps changed).
 | `Qwen3.5-35B-A3B-FP8_tp1_gb300.sh` | `bash Qwen3.5-35B-A3B-FP8_tp1_gb300.sh <full-lora-opti\|main-base> <TAG>` |
 | `Kimi-K2.5-NVFP4_run_gb300.sh` | `bash Kimi-K2.5-NVFP4_run_gb300.sh <worker\|head> <full-lora-opti\|main> <LORA> <BACKEND> <DISTADDR\|-> <TAG> <full\|gsm8k_only>` — `-` = the Kimi-K2.5-NVFP4-gb300.yaml head FQDN. **Worker FIRST, then head.** |
 | `jit_cache.sh` | `bash jit_cache.sh <restore\|save> <model> <pod> [git-url branch]` — laptop JIT-cache warm-start/save (wrapper over `../../dev/jit_store.sh`); skips the cold sm_103 JIT on a fresh pod |
+| `Kimi-K2.5-NVFP4_tests_only.sh` | `bash Kimi-K2.5-NVFP4_tests_only.sh <LORA=0\|1> <TAG> [full\|gsm8k_only]` — tests-only companion to the kimi run script: assumes the server is **already** launched/warming on `$PORT` and runs the head wait+test matrix (use when the launcher timed out on a slow cold autotune but the server is still coming up) |
+| `rerun_bs128.sh` | `bash rerun_bs128.sh <TAG>` — one-off: re-runs the SUSPECT qwen bench point (sgl-lora cell, base mode, bs128) on a warm server, per the runbook >5% cross-check rule |
 
 ## Run order (qwen, one 4-GPU pod)
 

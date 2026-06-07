@@ -7,6 +7,16 @@ results. This README is the map; the operating manual (workflow details + hard-w
 rules) is [`SKILL.md`](SKILL.md), and per-model knowledge lives in each
 `<platform>/models/<m>/MODEL.md`.
 
+## Codebase & image (GB300)
+
+| | |
+|---|---|
+| **Docker image** | `lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766` (pinned dated nightly in every `gb300/models/<m>/pod.yaml`; ships flashinfer-jit-cache `0.6.11.post1+cu130`, torch `2.11.0+cu130`, py3.12, sglang `@83bc77661`). |
+| **sglang codebase** | the **base/variant refs are injected at run time** (`BASE_REF` / `VARIANT_REF` in `model.env` point at injected branches — see [`SKILL.md`](SKILL.md) §3); the A/B is whatever commits you feed it. The 2026-06-06 validations used the LoRA-perf branch **`trtllm-lora-bf16`** of [`github.com/yushengsu-thu/sglang`](https://github.com/yushengsu-thu/sglang) (exact commits per each `MODEL.md`). |
+| **flashinfer** | re-pinned to `0.6.11.post1` after each `pip install -e` by the model's `hook_post_checkout` (matches the image's baked jit-cache; `FLASHINFER_PIN` in `model.env`). |
+
+> `gb200/` packs are **historical** (that cluster is gone) and left on their original image.
+
 ---
 
 ## 1. The tests

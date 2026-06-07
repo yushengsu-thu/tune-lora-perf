@@ -30,7 +30,7 @@ SRC_IN="${1:?usage: broadcast_jit_cache.sh <source-node (full name or short suff
 CACHE_DIR=sglang-dot-cache                       # under /mnt/stateful_partition
 SP=/mnt/stateful_partition
 HTTP_PORT=18080
-IMG='lmsysorg/sglang@sha256:97e7cd699dc879b56bc9f7a11f25c060fa4a6137e901a637f4378e9b01607a01'
+IMG='lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766'   # match the workload image (pre-cached on every GPU node)
 
 # ---- resolve nodes: all schedulable GB300 GPU nodes (skip gpu-maintenance taints) ----
 ALL=$(kubectl get nodes -o json | python3 -c "

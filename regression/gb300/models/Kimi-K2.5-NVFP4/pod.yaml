@@ -7,7 +7,8 @@
 #     pod's ephemeral /root — backed by the node's 2.9T kube-ephemeral-ssd; re-downloaded per pod)
 #   * /root/.cache hostPath on the node's 95G stateful partition (JIT/autotune cache persists;
 #     weights do NOT fit there — kimi is ~600G vs 95G)
-#   * image PINNED by digest (PR #27329 kernels need flashinfer 0.6.11-era headers, see qwen35 pack)
+#   * image PINNED to the dated nightly lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766
+#     (PR #27329 kernels need flashinfer 0.6.11-era headers, see qwen35 pack)
 # ComputeDomain CRD (resource.nvidia.com) is installed on this cluster — MNNVL/IMEX via DRA.
 apiVersion: v1
 kind: Service
@@ -67,7 +68,7 @@ spec:
     effect: "NoSchedule"
   containers:
   - name: sglang
-    image: lmsysorg/sglang@sha256:97e7cd699dc879b56bc9f7a11f25c060fa4a6137e901a637f4378e9b01607a01
+    image: lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766
     imagePullPolicy: IfNotPresent
     command:
     - /bin/sh
@@ -189,7 +190,7 @@ spec:
     effect: "NoSchedule"
   containers:
   - name: sglang
-    image: lmsysorg/sglang@sha256:97e7cd699dc879b56bc9f7a11f25c060fa4a6137e901a637f4378e9b01607a01
+    image: lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766
     imagePullPolicy: IfNotPresent
     command:
     - /bin/sh

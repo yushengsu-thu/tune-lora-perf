@@ -9,6 +9,14 @@ chain (`run_all.sh`) stops at the first problem. Pod specs default to the valida
 [`../regression/gb300`](../regression/gb300) packs — knowledge/caveats live in those
 `MODEL.md` files.
 
+## Codebase & image
+
+| | |
+|---|---|
+| **Docker image** | `lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766` (pinned dated nightly; ships flashinfer-jit-cache `0.6.11.post1+cu130`, torch `2.11.0+cu130`, py3.12, sglang `@83bc77661`). Set in the pod packs the dev loop reuses ([`../regression/gb300/models/<model>/pod.yaml`](../regression/gb300)). |
+| **sglang codebase** | your **local checkout** (`SGLANG_SRC`, default `/Users/yushengsu/Downloads/tml/sglang`); `2_upload_code.sh` uploads the **current branch's committed HEAD**. The LoRA-perf work tracks **`trtllm-lora-bf16`** on [`github.com/yushengsu-thu/sglang`](https://github.com/yushengsu-thu/sglang) (override what to upload with `SGLANG_BRANCH=<ref>`). |
+| **flashinfer** | re-pinned to `0.6.11.post1` after `pip install -e` (matches the image's baked jit-cache; the branch pyproject's 0.6.12 breaks the sm_103 `trtllm_lora_temp` JIT). Override with `FLASHINFER_PIN`. |
+
 ```
 dev/
 ├── common.sh            # model-agnostic config + proven launch/wait/kill helpers

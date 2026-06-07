@@ -34,11 +34,12 @@ spec:
     effect: "NoSchedule"
   containers:
   - name: sglang
-    # Image PINNED by digest: PR #27329's trtllm_lora_temp JIT kernels compile against this
-    # build's tensorrt_llm headers. The floating dev-cu13 tag moved (2026-06-06) to a build whose
-    # get_sf_out_offset_* signatures changed -> JIT compile error at variant launch. Re-pin (or
-    # un-pin) when the PR rebases onto current main/flashinfer.
-    image: lmsysorg/sglang@sha256:97e7cd699dc879b56bc9f7a11f25c060fa4a6137e901a637f4378e9b01607a01
+    # Image PINNED to a DATED nightly (not the floating dev-cu13): PR #27329's trtllm_lora_temp JIT
+    # kernels compile against this build's tensorrt_llm headers. The floating dev-cu13 tag moved
+    # (2026-06-06) to a build whose get_sf_out_offset_* signatures changed -> JIT compile error at
+    # variant launch; this dated tag is immutable. Ships flashinfer-jit-cache 0.6.11.post1+cu130
+    # (== FLASHINFER_PIN) + sglang @83bc77661. Re-pin when the PR rebases onto current main/flashinfer.
+    image: lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766
     imagePullPolicy: IfNotPresent
     command:
     - /bin/sh

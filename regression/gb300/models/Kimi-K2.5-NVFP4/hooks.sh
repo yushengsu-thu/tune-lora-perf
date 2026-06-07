@@ -35,7 +35,7 @@ hook_between_cells(){
 # (0.6.12 changed get_sf_out_offset_* signatures — the PR's own CI Extra is red on this), and the
 # pinned pod image ships flashinfer-jit-cache 0.6.11.post1+cu130. So after each editable install
 # re-pin the python side back to the image-matching version (FLASHINFER_PIN in model.env).
-# Remove this hook (and the image digest pin in pod.yaml) when the PR rebases onto 0.6.12.
+# Remove this hook (and the image tag pin in pod.yaml) when the PR rebases onto 0.6.12.
 hook_post_checkout(){
   local P
   if [ -n "${FLASHINFER_PIN:-}" ]; then

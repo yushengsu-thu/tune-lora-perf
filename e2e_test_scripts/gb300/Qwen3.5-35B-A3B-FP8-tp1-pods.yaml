@@ -1,8 +1,8 @@
 # GB300 port of ../flo-Qwen3.5-35B-A3B-FP8-tp1-pods.yaml (single-GPU tp1 pr/oss pods) for Qwen3.5-35B-A3B-FP8_tp1_gb300.sh.
 # Cluster conventions (gcp-radixark-02 / GKE / nvidia-gb300) — see Qwen3.5-35B-A3B-FP8-pod.yaml header:
 # no runtimeClassName, cohort toleration, /mnt/stateful_partition hostPaths (shares the
-# /data weights + JIT cache with the TP4 pod when scheduled on the same node), pinned image
-# digest + flashinfer 0.6.11.post1 re-pin.
+# /data weights + JIT cache with the TP4 pod when scheduled on the same node), image pinned to
+# the dated nightly lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766 + flashinfer 0.6.11.post1 re-pin.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -19,7 +19,7 @@ spec:
   - {effect: NoExecute, key: node.kubernetes.io/unreachable, operator: Exists, tolerationSeconds: 300}
   containers:
   - name: main
-    image: lmsysorg/sglang@sha256:97e7cd699dc879b56bc9f7a11f25c060fa4a6137e901a637f4378e9b01607a01
+    image: lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766
     imagePullPolicy: IfNotPresent
     command: ["/bin/bash","-c"]
     args:
@@ -76,7 +76,7 @@ spec:
   - {effect: NoExecute, key: node.kubernetes.io/unreachable, operator: Exists, tolerationSeconds: 300}
   containers:
   - name: main
-    image: lmsysorg/sglang@sha256:97e7cd699dc879b56bc9f7a11f25c060fa4a6137e901a637f4378e9b01607a01
+    image: lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766
     imagePullPolicy: IfNotPresent
     command: ["/bin/bash","-c"]
     args:

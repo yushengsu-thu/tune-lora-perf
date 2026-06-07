@@ -11,8 +11,9 @@
 #   * nodes: 907Gi allocatable memory (kimi-rf's 1800Gi limit would be UNSCHEDULABLE -> 850Gi),
 #     2.5TiB allocatable ephemeral (Kimi NVFP4 ~600G to /root is fine, but RE-DOWNLOADS per pod —
 #     the 95G stateful partition cannot hold it; only the JIT cache persists via hostPath)
-#   * image pinned by digest + flashinfer re-pin 0.6.11.post1 (same sm_103 JIT header-skew
-#     reason as Qwen3.5-35B-A3B-FP8-pod.yaml; the kimi JIT kernels compile against tensorrt_llm headers too)
+#   * image pinned to the dated nightly lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766 +
+#     flashinfer re-pin 0.6.11.post1 (same sm_103 JIT header-skew reason as
+#     Qwen3.5-35B-A3B-FP8-pod.yaml; the kimi JIT kernels compile against tensorrt_llm headers too)
 # Head FQDN for --dist-init-addr:
 #   mnnvl-kimi-gb300-0.mnnvl-kimi-gb300-head.default.svc.cluster.local:20000
 apiVersion: v1
@@ -75,7 +76,7 @@ spec:
     effect: "NoSchedule"
   containers:
   - name: sglang
-    image: lmsysorg/sglang@sha256:97e7cd699dc879b56bc9f7a11f25c060fa4a6137e901a637f4378e9b01607a01
+    image: lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766
     imagePullPolicy: IfNotPresent
     command:
     - /bin/sh
@@ -203,7 +204,7 @@ spec:
     effect: "NoSchedule"
   containers:
   - name: sglang
-    image: lmsysorg/sglang@sha256:97e7cd699dc879b56bc9f7a11f25c060fa4a6137e901a637f4378e9b01607a01
+    image: lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766
     imagePullPolicy: IfNotPresent
     command:
     - /bin/sh

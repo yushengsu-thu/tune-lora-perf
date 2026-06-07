@@ -34,9 +34,10 @@ a per-endpoint prompt-check table, and kernel-structure profiler traces.
 > - **Environment pinning matters (2026-06-06):** PR #27329's `trtllm_lora_temp` JIT kernels do
 >   NOT compile against flashinfer 0.6.12 (`get_sf_out_offset_*` signature change; the PR's own
 >   CI Extra is red) even though the branch's pyproject pins 0.6.12. The working combo — image
->   digest `97e7cd69…` + flashinfer 0.6.11.post1 — is baked into the pod.yamls (digest pin) and
->   `hook_post_checkout` (FLASHINFER_PIN re-pin after every editable install). Un-pin both when
->   the PR rebases.
+>   `lmsysorg/sglang:nightly-dev-cu13-20260603-83bc7766` (dated nightly; ships flashinfer-jit-cache
+>   0.6.11.post1+cu130 + sglang @83bc77661) + flashinfer 0.6.11.post1 — is baked into the pod.yamls
+>   (tag pin) and `hook_post_checkout` (FLASHINFER_PIN re-pin after every editable install). Un-pin
+>   both when the PR rebases. (The earlier digest pin `97e7cd69…` was the same good build by digest.)
 > - Earlier finding (2026-06-05): `lora-opti@867f2ca413fa` produced LoRA decode garbage
 >   (`Thinking!!!!`) despite MAIN_ALLOC=1 — prefill acc was clean; only the prompt-check caught
 >   it. Use the PR branch (`full-lora-opti`), where decode is coherent.
