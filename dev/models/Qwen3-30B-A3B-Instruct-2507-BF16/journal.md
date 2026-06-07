@@ -12,9 +12,12 @@ strike it through (`~~...~~`) and add a pointer to the log entry where it was tr
   *fast* path instead of the Triton fallback.~~ → **DONE** (§13-18, 2026-06-07: decomposed bf16
   LoRA launcher `sgl_trtllm_bf16_routed_moe_lora` mirroring the FP4 pipeline; launches clean,
   token-identical decode vs triton, decode +12%/+17%/+28% over the triton baseline @ bs16/32/64).
-- **Phase 2 — two-stream overlap for the bf16 lora path**: wire `SGLANG_OPT_LORA_*`
+- ~~**Phase 2 — two-stream overlap for the bf16 lora path**: wire `SGLANG_OPT_LORA_*`
   (moe_overlap.py / shared_add_overlap.py) onto the bf16 launcher (the lora_ready_event /
-  gemm2_done_event hooks are already plumbed in the .cu; currently single-stream).
+  gemm2_done_event hooks are already plumbed in the .cu; currently single-stream).~~ →
+  **DONE** (§21, 2026-06-07: O1-bf16 side-stream gate_up delta wired into
+  `install_two_stream_overrides`; down/finalize overlap intentionally not wired per the
+  FP8/FP4 net-negative verdict).
 - **Port the `SGLANG_OPT_LORA_*` overlap optimizations to the Triton bf16 path.** The current opt set
   (`SGLANG_EXPERIMENTAL_LORA_OPTI`, `OVERLAP_MAIN_ALLOC`, `SHARED_ADD_OVERLAP`, `CUBLAS`) targets the
   experimental FP8 path (`trtllm_lora_temp/{moe_overlap,shared_add_overlap}.py`). Check which (if any)
@@ -355,3 +358,58 @@ sglang commits on branch qwen3-30b-a3b-2507-bf16: 623befb3e (implementation), 4f
   phase-1 single-stream with side-stream events plumbed).
 - Pod (6zvh) left running with the fused bf16 server config available; JIT cache for fp 98709c7d
   saved to the laptop store.
+
+### 20. PR diagram fixes (rendering + accuracy)
+- "Unable to render rich display": root cause was a **semicolon inside a mermaid message** (mermaid
+  treats `;` as a statement separator) plus risky chars (`[ ]`, `=`, `<br/>` in Notes). Sanitized.
+- **Accuracy audit vs code (user asked "two-stream 了沒?")**: verified in code that ALL side-stream
+  overlaps (O7 qkv / O8 o_proj / O9 merged-column / O1 MoE gate_up) are gated by
+  `SGLANG_LORA_TWO_STREAM=1` via `install_two_stream_overrides()` — which target_command.sh does
+  NOT set, and which currently patches only the FP8/FP4 MoE fns (not the new bf16 fn). So the
+  verified run is **single-stream end to end** (the 4 SGLANG_OPT_* envs affect kernel/alloc choices,
+  not streams). The PR diagram was redrawn as the truthful single-stream flow (one participant),
+  with a text note explaining the two-stream gating + that wiring bf16 into the override is phase 2
+  (the .cu already plumbs lora_ready_event / gemm2_done_event).
+- **CORRECTION (found during §21)**: the §20 conclusion above was WRONG about attention. The
+  `SGLANG_LORA_TWO_STREAM` env named in the docstrings is STALE — the actual master switch is
+  `_SGLANG_EXPERIMENTAL_LORA_OPTI = envs.SGLANG_EXPERIMENTAL_LORA_OPTI.get()` (lora/layers.py:1204),
+  which target_command.sh DOES set. So in the verified phase-1 run the attention O7/O8 (and O9)
+  two-stream overlaps WERE active for decode-shaped batches (`is_two_stream_active`: tokens <=
+  SGLANG_TWO_STREAM_MAX_TOKENS=256); only the MoE block was single-stream (bf16 fn not patched).
+  PR text/diagrams fixed again in §21.
+
+### 21. Phase 2 — bf16 MoE two-stream overlap (O1-bf16)
+- Commit `526e0ae22` (sglang, branch qwen3-30b-a3b-2507-bf16), python-only, FP8/FP4 untouched:
+  - `moe_overlap.py`: NEW `fused_experts_none_to_experimental_sgl_trtllm_bf16_lora_two_stream` —
+    mirror of the FP4 two-stream sibling minus quant args. Gate: virtual-experts LoRA AND
+    decode-shaped batch, else delegate to the saved single-stream original (byte-identical).
+    Fork: `merged_experts_fused_moe_lora_add` (gate_up delta) on the shared side stream +
+    `lora_event.record()`; main stream runs packed-topk prep, allocs, then
+    `trtllm_bf16_routed_moe_lora(..., lora_ready_event=handle)` — the .cu launcher already does
+    `cudaStreamWaitEvent` right before the activation kernel (the only consumer of the delta).
+    Event kept alive during cuda-graph capture via `_LORA_OVERLAP_EVENTS` (same as fp8/fp4).
+    Down-LoRA serial on main, `gemm2_done_event=0` — down/finalize overlap is bench-verified
+    net-negative on FP8/FP4 and corrupts base decode under graph replay, so not wired.
+  - `__init__.py`: `_ORIGINAL_BF16_MOE_LORA_FUNC` + `get_original_bf16_moe_lora_func()` + patch of
+    `ft.fused_experts_none_to_experimental_sgl_trtllm_bf16_lora` in `install_two_stream_overrides`
+    (lora_layer.py:169 looks the fn up on the module at call time, so the patch takes effect the
+    same way as fp8/fp4).
+- No env changes needed: `SGLANG_EXPERIMENTAL_LORA_OPTI=1` (already in target_command.sh) installs
+  the overrides; the per-batch decode gate turns the overlap on.
+- Uploaded to pod (526e0ae22); python-only change → JIT fp unchanged, warm cache RESTORED
+  (fp 98709c7d). Verification: 3_run_benchmark (coherence + bench) PASS:
+  - Coherence: lora cell decode identical text to phase 1 ("Paris. The capital of the United
+    States is Washington, D.C. ...") — overlap changes scheduling only, numerics unchanged.
+  - no-lora cells unchanged (3790.8/6780.2/11370.9 vs phase-1 3787.2/6778.1/11400.0) — base path
+    unaffected, as designed.
+  - lora decode tok/s @ bs16/32/64 (in=out=2048):
+
+    | bs | phase 2 two-stream | phase 1 single-stream | gain | vs triton baseline |
+    |---|---|---|---|---|
+    | 16 | 2613.6 | 2421.8 | +7.9% | +20.9% (2161.5) |
+    | 32 | 4771.0 | 4484.2 | +6.4% | +25.0% (3817.2) |
+    | 64 | 8324.2 | 7835.6 | +6.2% | +35.8% (6128.2) |
+
+  - lora/no-lora decode ratio: 63.9/66.2/68.7% (phase 1) → **68.9/70.4/73.2%** (phase 2).
+  - ITL ms: 6.61/7.14/8.17 → 6.12/6.71/7.69.
+  - results dir: dev/results/Qwen3-30B-A3B-Instruct-2507-BF16/20260607-114030/bench/
