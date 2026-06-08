@@ -144,3 +144,51 @@ fired detached. HEAD=526e0ae22, backend=experimental_sgl_trtllm, flashinfer=0.6.
 5. gb300 e2e: gsm8k base 0.950 / lora 0.940; bench bs16-128 xcheck OK.
 
 No sglang code change was needed — the flag was already supported on the bf16 experimental path.
+
+### 5. allreduce-fusion + extra flags investigation (2026-06-08)
+User asked to add to BOTH cells: `--reasoning-parser qwen3 --tool-call-parser qwen3_coder
+--mamba-scheduler-strategy extra_buffer --enable-flashinfer-allreduce-fusion`, then re-profile;
+and (follow-up) "if it crashes on allreduce fusion, FIX it, don't disable it."
+
+Findings (launch sanity via dev launch_server, fusion ON):
+- **`--mamba-scheduler-strategy extra_buffer` is the crash**, NOT allreduce fusion. Traceback:
+  `schedule_batch.py:2102 _mamba_radix_cache_v2_req_prepare_for_extend →
+   req.mamba_ping_pong_track_buffer[...] → TypeError: 'NoneType' object is not subscriptable`.
+  Qwen3-30B-A3B-Instruct-2507 is a STANDARD-attention MoE (no mamba/linear layers), so the mamba
+  radix-cache path has no track buffer. This flag does not apply to this model (that's why the base
+  BF16 pack dropped it) — not a bug to fix.
+- **`--enable-flashinfer-allreduce-fusion` works end-to-end on the current branch (526e0ae22).** With
+  fusion ON + the two parser flags (no mamba flag): cuda-graph capture completed 100%, server READY,
+  and REAL base + lora inference both coherent ("Paris. The capital of the United States is
+  Washington, D.C."). NO illegal memory access, no traceback. server_args confirms
+  enable_flashinfer_allreduce_fusion=True, experts_shared_outer_loras=True.
+  → The documented "allreduce fusion ON → illegal memory access in cuda-graph capture" crash does
+  NOT reproduce now (it predated the bf16 two-stream work / current branch state). Nothing to fix
+  in the fusion path; the earlier `--enforce-disable-flashinfer-allreduce-fusion` was based on a
+  stale observation. The two parser flags are API-layer (harmless to perf).
+- **Bench fusion ON vs OFF (decode tok/s, bs 16/32/64, both cells; fusion ON also stresses bs64 +
+  cuda-graph and stayed clean)** — model.env flipped to `--enable-flashinfer-allreduce-fusion` +
+  the parser flags:
+
+  | cell | bs | fusion OFF | fusion ON | Δ |
+  |---|---|---|---|---|
+  | no-lora | 16 | 3782.0 | 3932.5 | +4.0% |
+  | no-lora | 32 | 6757.8 | 6991.4 | +3.5% |
+  | no-lora | 64 | 11437.3 | 11757.9 | +2.8% |
+  | lora | 16 | 2314.5 | 2365.6 | +2.2% |
+  | lora | 32 | 4207.6 | 4278.6 | +1.7% |
+  | lora | 64 | 7265.5 | 7424.1 | +2.2% |
+
+  lora ITL 6.91/7.61/8.81 → 6.76/7.48/8.62 ms; lora coherent. → **fusion ON is a clean win** (both
+  cells faster, no correctness/stability cost). model.env now defaults to fusion ON + parsers.
+- **torch profiler traces (5_run_profile, fusion ON)**: lora + no-lora, bs64, per-rank CPU+GPU
+  traces captured (cuda-graph ON = real timing) — another fusion-ON load pass, lora coherent, no
+  crash. Traces in dev/results/.../20260608-130204/{no-lora,lora}/bs64-TP-{0..3}.trace.json.gz
+  (no-lora ~5M/rank, lora ~71M/rank), all gzip-valid. The pod's GKE API-server connection truncates
+  single >64MB streams (both `kubectl exec cat` and `kubectl cp` capped ~64MB), so one 72MB lora
+  rank failed the legacy cat-retry pull → added a size-verified 8MB-chunk fallback to
+  common.sh `pull_trace` (split on pod → per-chunk exact-size check + retry → reassemble); all 4
+  lora ranks then validated. Open the traces in perfetto/chrome tracing to inspect the kernel
+  timeline (the fused allreduce+rmsnorm replaces the standalone all-reduce + norm kernels).
+- **Decision (user)**: keep fusion ON + the two parser flags as the pack default; mamba flag stays
+  out. model.env / target_command.sh / the gb300 e2e runner all synced to this config.

@@ -12,7 +12,8 @@ numactl --membind=0,1 python3 -m sglang.launch_server \
   --tp 4 --ep 4 --host 0.0.0.0 --port 30000 \
   --mem-fraction-static 0.8 --trust-remote-code \
   --cuda-graph-max-bs 128 --max-prefill-tokens 65536 --chunked-prefill-size 4096 \
-  --enforce-disable-flashinfer-allreduce-fusion \
+  --enable-flashinfer-allreduce-fusion \
+  --reasoning-parser qwen3 --tool-call-parser qwen3_coder \
   --attention-backend trtllm_mha \
   --moe-runner-backend experimental_sgl_trtllm \
   --lora-use-virtual-experts \

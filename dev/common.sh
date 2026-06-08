@@ -261,5 +261,26 @@ pull_trace(){  # $1=rank $2=remote-dir $3=local-file ; rc=1 if still bad
     gzip -t "$dst" 2>/dev/null && return 0
     echo "    TP${r} pull truncated (attempt $w) — retrying"
   done
+  # Fallback: the cat-stream still truncates ~64MB on some GKE API-server connections regardless of
+  # retries (seen 2026-06-08, a 72MB rank trace). Split on the pod into 8MB chunks and pull each with
+  # a per-chunk exact-size check + retry, then reassemble — small chunks complete reliably.
+  echo "    TP${r} stream truncates — falling back to size-verified 8MB chunk pull"
+  local cdir="/tmp/.pull_tp${r}_$$"
+  $KC exec "$pod" -- bash -lc "f=\$(find ${src} \( -name '*-TP-${r}-EP-*.trace.json.gz' -o -name '*-TP-${r}.trace.json.gz' \) 2>/dev/null | head -1); [ -n \"\$f\" ] || exit 1; rm -rf ${cdir}; mkdir -p ${cdir}; split -b 8m -d -a 3 \"\$f\" ${cdir}/c_" || { rm -f "$dst"; return 1; }
+  local manifest cok=1
+  manifest=$($KC exec "$pod" -- bash -lc "for c in ${cdir}/c_*; do echo \"\$(basename \$c) \$(stat -c%s \$c)\"; done")
+  : > "$dst"
+  local cname csz got try
+  while read -r cname csz; do
+    [ -n "$cname" ] || continue
+    got=""
+    for try in 1 2 3 4 5 6; do
+      $KC exec "$pod" -- bash -lc "cat ${cdir}/${cname}" > "${dst}.part" 2>/dev/null
+      [ "$(stat -f%z "${dst}.part" 2>/dev/null || echo 0)" = "$csz" ] && { cat "${dst}.part" >> "$dst"; got=1; break; }
+    done
+    [ -n "$got" ] || { cok=0; break; }
+  done <<< "$manifest"
+  rm -f "${dst}.part"; $KC exec "$pod" -- bash -lc "rm -rf ${cdir}" >/dev/null 2>&1
+  [ "$cok" = 1 ] && gzip -t "$dst" 2>/dev/null && return 0
   rm -f "$dst"; return 1
 }

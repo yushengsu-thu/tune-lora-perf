@@ -6,9 +6,12 @@
 #     /data/lora-diff-Qwen3-30B-A3B-Instruct-2507 (r=32, all-linear) whose vLLM/trainer reference
 #     logprobs the dev 4_run_acc already matched to the noise floor.
 #   * LoRA flags add --experts-shared-outer-loras and --max-lora-rank 32.
-#   * allreduce fusion FORCE-DISABLED (--enforce-disable-flashinfer-allreduce-fusion): the bf16
-#     LoRA path crashes in cuda-graph capture with fusion ON (illegal memory access).
-#   * NO --mamba-scheduler-strategy: Qwen3-30B-A3B-Instruct-2507 is a standard-attention MoE.
+#   * allreduce fusion ON (--enable-flashinfer-allreduce-fusion): verified end-to-end on branch
+#     526e0ae22 (capture + warmup + real base/lora inference clean; +2-4% decode) — the old
+#     "fusion -> illegal memory access" no longer reproduces.
+#   * reasoning/tool-call parsers ON (qwen3 / qwen3_coder) — API-layer, perf-neutral.
+#   * NO --mamba-scheduler-strategy: Qwen3-30B-A3B-Instruct-2507 is a standard-attention MoE
+#     (enabling it crashes in _mamba_radix_cache_v2_req_prepare_for_extend — no mamba state).
 #   * NOCO=1 (default) SKIPS the git checkout — this runner is meant to run on a pod the dev loop
 #     already prepared at the task branch (qwen3-30b-a3b-2507-bf16). Set NOCO=0 to fetch+checkout.
 #   * gsm8k uses the real adapter, so the req-lora accuracy is a genuine number (NOT the alpha
@@ -34,7 +37,7 @@ for cfg in "${CONFIGS[@]}"; do
   # NEVER add SGLANG_OPT_LORA_DOWN_FINALIZE_OVERLAP or SGLANG_OPT_LORA_ENABLE_PDL (corrupts base).
   OPT=""; [ "$opt" = PR ] && OPT="SGLANG_EXPERIMENTAL_LORA_OPTI=1 SGLANG_OPT_LORA_OVERLAP_MAIN_ALLOC=1 SGLANG_OPT_LORA_SHARED_ADD_OVERLAP=1 SGLANG_OPT_LORA_CUBLAS=1"
   LF=""; [ "$lora" = 1 ] && LF="--enable-lora --max-loras-per-batch 1 --max-lora-rank 32 --lora-backend triton --lora-use-virtual-experts --experts-shared-outer-loras --lora-paths alpha=$LORAP"
-  setsid env $OPT PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True numactl --membind=0,1 python3 -m sglang.launch_server --model-path $MODEL --tp 4 --ep 4 --host 0.0.0.0 --port $PORT --cuda-graph-max-bs 128 --mem-fraction-static 0.8 --trust-remote-code --max-prefill-tokens 65536 --chunked-prefill-size 4096 --enforce-disable-flashinfer-allreduce-fusion --attention-backend trtllm_mha --moe-runner-backend $BACKEND $LF </dev/null >/tmp/srv.log 2>&1 &
+  setsid env $OPT PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True numactl --membind=0,1 python3 -m sglang.launch_server --model-path $MODEL --tp 4 --ep 4 --host 0.0.0.0 --port $PORT --cuda-graph-max-bs 128 --mem-fraction-static 0.8 --trust-remote-code --max-prefill-tokens 65536 --chunked-prefill-size 4096 --enable-flashinfer-allreduce-fusion --reasoning-parser qwen3 --tool-call-parser qwen3_coder --attention-backend trtllm_mha --moe-runner-backend $BACKEND $LF </dev/null >/tmp/srv.log 2>&1 &
   # 225 x 12s = 45 min — headroom for a cold sm_103 trtllm_lora_temp JIT (warm cache lands ~8 min).
   R=0; for i in $(seq 1 225); do curl -sf http://127.0.0.1:$PORT/v1/models >/dev/null 2>&1 && { R=1; break; }
     c=$(tr '\r' '\n' </tmp/srv.log 2>/dev/null|grep -acE "Traceback|Error|serve: error|out of memory|CUDA out|Capture cuda graph failed"); [ "${c:-0}" -ge 1 ] && { R=2; break; }; sleep 12; done
