@@ -68,6 +68,9 @@ done
 # /data now — base config is downloaded (setup done) and it must exist before any lora-cell launch.
 # No-op (returns 0) when a real LORA_PATH was specified.
 ensure_dummy_lora || { echo "ERROR: dummy LoRA setup failed"; exit 1; }
+# If model.env requested a real HF adapter (LORA_PATH=hf + LORA_HF_REPO), download it onto each
+# pod's /data now (pod HF_TOKEN authenticates). No-op (returns 0) otherwise.
+ensure_hf_lora || { echo "ERROR: HF LoRA setup failed"; exit 1; }
 
 save_state "ID=${ID}"   # fresh launch resets the run state (RUN_DIR is created by step 3/4)
 echo "== [1/launch] PASS — state saved to ${STATE}"

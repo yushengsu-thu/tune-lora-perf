@@ -69,6 +69,22 @@ case "$LORA_PATH" in
     echo "== [dummy-lora] LORA_PATH=dummy -> generate r${DUMMY_LORA_RANK} mock at ${LORA_PATH}" >&2
     ;;
 esac
+# ---------- real HF adapter: a model.env may set LORA_PATH=hf + LORA_HF_REPO=<org/name> ----------
+# Meaning: "serve a REAL adapter pulled from a Hugging Face repo." We resolve the marker to a
+# canonical /data dir (named after the repo), patch LORA_EXTRA's --lora-paths token to it, and set
+# LORA_FROM_HF=1 (the launch step then `hf download`s it onto each pod's /data using the pod's
+# HF_TOKEN). LORA_HF_REPO_TYPE defaults to "dataset" (this adapter ships as a dataset repo).
+LORA_FROM_HF=0
+case "$LORA_PATH" in
+  hf)
+    [ -n "${LORA_HF_REPO:-}" ] || { echo "ERROR: LORA_PATH=hf requires LORA_HF_REPO in ${MODEL_DIR}/model.env" >&2; exit 1; }
+    LORA_HF_REPO_TYPE="${LORA_HF_REPO_TYPE:-dataset}"
+    _hf_dir="/data/$(basename "$LORA_HF_REPO")"
+    LORA_EXTRA="${LORA_EXTRA/${LORA_NAME}=hf/${LORA_NAME}=${_hf_dir}}"
+    LORA_PATH="$_hf_dir"; LORA_FROM_HF=1
+    echo "== [hf-lora] LORA_PATH=hf -> download ${LORA_HF_REPO} (${LORA_HF_REPO_TYPE}) to ${LORA_PATH}" >&2
+    ;;
+esac
 # pod spec defaults to the validated regression pack's yaml; override PACK/POD_YAML in model.env
 PACK="${PACK:-${ROOT_DIR}/regression/gb300/models/${MODEL}}"
 POD_YAML="${POD_YAML:-${PACK}/pod.yaml}"
@@ -163,6 +179,24 @@ ensure_dummy_lora(){
         DL_RANK='${DUMMY_LORA_RANK}' DL_ALPHA='${DUMMY_LORA_RANK}' \
         DL_TARGETS='${DUMMY_LORA_TARGETS}' python3 -" < "${DEV_DIR}/gen_dummy_lora.py" \
       || { echo "ERROR: dummy LoRA generation failed on ${P}" >&2; return 1; }
+  done
+}
+
+# ---------- real HF adapter download (only when LORA_FROM_HF=1) ----------
+# Downloads the adapter repo to $LORA_PATH on EVERY pod's /data (hostPath is per-node, so each node
+# needs its own copy), authenticated by the pod's HF_TOKEN (hf-token-yanbin secret). Idempotent:
+# skips a pod whose ${LORA_PATH}/adapter_model.safetensors already exists.
+ensure_hf_lora(){
+  [ "${LORA_FROM_HF:-0}" = 1 ] || return 0
+  local P
+  for P in "${PODS[@]}"; do
+    echo "-- [hf-lora] ensuring ${LORA_HF_REPO} at ${LORA_PATH} on ${P}"
+    $KC exec "$P" -- bash -lc "
+      [ -f '${LORA_PATH}/adapter_model.safetensors' ] && { echo '   already present'; exit 0; }
+      [ -n \"\$HF_TOKEN\" ] || { echo 'ERROR: HF_TOKEN not set in pod'; exit 1; }
+      hf download '${LORA_HF_REPO}' --repo-type '${LORA_HF_REPO_TYPE}' --local-dir '${LORA_PATH}' >/dev/null \
+        && ls -l '${LORA_PATH}/adapter_model.safetensors' '${LORA_PATH}/adapter_config.json'" \
+      || { echo "ERROR: HF adapter download failed on ${P} (private repo — pod HF_TOKEN must have access)" >&2; return 1; }
   done
 }
 
