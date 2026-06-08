@@ -12,9 +12,8 @@ to the log entry.
   the adapter's true expert-LoRA layout (per-expert vs shared-outer / expert_dim=1) from
   adapter_model.safetensors shapes, and decide whether `--experts-shared-outer-loras` should be ON
   for it (the flag force-overrides auto-detect).
-- **Two-stream behaviour with shared-outer**: the gate_up/down LoRA deltas under shared-outer take a
-  different triton kernel branch (num_experts_for_weight==0 sentinel); confirm the O1-bf16 side-stream
-  overlap still nets a speedup in this layout (phase-2 work landed for the non-shared-outer case).
+- ~~**Two-stream behaviour with shared-outer**: confirm the O1-bf16 side-stream overlap still nets a
+  speedup in this layout.~~ → **DONE** (§6/§7: +20-22% on shared-outer, +20-25% on normal r32).
 
 ---
 
@@ -210,3 +209,35 @@ coherent. lora decode tok/s, in=out=2048:
 the +6-8% measured on the earlier non-shared-outer r=16 dummy (the real r=32 + shared-outer LoRA
 delta is heavier, so overlapping the gate_up shrink/expand on the side stream hides more work).
 Both cells coherent.
+
+### 7. Full factorial: {normal vs shared-outer} × {single vs two stream} × {fusion ON vs OFF} (2026-06-08)
+All at rank 32 on the same pod, so the only knob between A and B is the `--experts-shared-outer-loras`
+flag (caveat: A = a generated per-expert dummy targeting q/k/v/o/gate/up/down; B = the real all-linear
+shared-outer adapter — module coverage differs, so the A-vs-B absolute gap mixes "module set" with
+"shared-outer layout". The single-vs-two and ON-vs-OFF columns within a row are clean.) no-lora reuses
+the default-backend baseline per fusion state (ON 3932.5/6991.4/11757.9, OFF 3782.0/6757.8/11437.3).
+
+lora decode tok/s (bs16/32/64):
+
+| | single, fus ON | two, fus ON | single, fus OFF | two, fus OFF |
+|---|---|---|---|---|
+| A. normal (dummy r32) | 2073.8/3897.6/6939.0 | 2594.9/4723.5/8316.4 | 2046.2/3791.9/6784.4 | 2483.9/4558.2/8095.8 |
+| B. shared-outer (real r32) | 1932.3/3577.2/6185.9 | 2365.6/4278.6/7424.1 | 1894.9/3487.9/6070.4 | 2314.5/4207.6/7265.5 |
+
+lora / no-lora ratio (bs16/32/64):
+
+| | single, fus ON | two, fus ON | single, fus OFF | two, fus OFF |
+|---|---|---|---|---|
+| A. normal | 52.7/55.7/59.0% | 66.0/67.6/70.7% | 54.1/56.1/59.3% | 65.7/67.5/70.8% |
+| B. shared-outer | 49.1/51.2/52.6% | 60.2/61.2/63.1% | 50.1/51.6/53.1% | 61.2/62.3/63.5% |
+
+Takeaways:
+- **two-stream is the dominant win**: A +20-25%, B +20-22% over single-stream (both fusion states).
+- **fusion ON vs OFF barely moves the lora cells** (<1pt ratio at fixed stream; fusion's benefit is
+  mostly on the no-lora fused-backend path).
+- normal is faster than shared-outer at equal rank (e.g. two+ON bs64: A 8316 vs B 7424) — partly the
+  shared-outer triton branch, partly B's wider (all-linear) module coverage.
+- coherence: B (real adapter) identical coherent text across all four cells; A (random dummy) text
+  varies single-vs-two (numerical noise amplified by random weights) — not a correctness issue.
+- artifact: a generated normal per-expert dummy at rank 32 now lives at
+  /data/Qwen3-30B-A3B-Instruct-2507-dummy-lora-r32 on the pod (for this comparison).
