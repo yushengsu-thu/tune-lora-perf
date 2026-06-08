@@ -217,22 +217,26 @@ shared-outer adapter — module coverage differs, so the A-vs-B absolute gap mix
 "shared-outer layout". The single-vs-two and ON-vs-OFF columns within a row are clean.) no-lora reuses
 the default-backend baseline per fusion state (ON 3932.5/6991.4/11757.9, OFF 3782.0/6757.8/11437.3).
 
-lora decode tok/s (bs16/32/64):
+lora decode tok/s (bs16/32/64) — normal also measured at rank 16 (existing per-expert dummy):
 
 | | single, fus ON | two, fus ON | single, fus OFF | two, fus OFF |
 |---|---|---|---|---|
-| A. normal (dummy r32) | 2073.8/3897.6/6939.0 | 2594.9/4723.5/8316.4 | 2046.2/3791.9/6784.4 | 2483.9/4558.2/8095.8 |
-| B. shared-outer (real r32) | 1932.3/3577.2/6185.9 | 2365.6/4278.6/7424.1 | 1894.9/3487.9/6070.4 | 2314.5/4207.6/7265.5 |
+| A. normal r16 | 2160.9/4005.9/7067.5 | 2701.8/4887.1/8445.4 | 2110.5/3920.4/6897.2 | 2642.2/4762.5/8306.3 |
+| A. normal r32 | 2073.8/3897.6/6939.0 | 2594.9/4723.5/8316.4 | 2046.2/3791.9/6784.4 | 2483.9/4558.2/8095.8 |
+| B. shared-outer r32 | 1932.3/3577.2/6185.9 | 2365.6/4278.6/7424.1 | 1894.9/3487.9/6070.4 | 2314.5/4207.6/7265.5 |
 
 lora / no-lora ratio (bs16/32/64):
 
 | | single, fus ON | two, fus ON | single, fus OFF | two, fus OFF |
 |---|---|---|---|---|
-| A. normal | 52.7/55.7/59.0% | 66.0/67.6/70.7% | 54.1/56.1/59.3% | 65.7/67.5/70.8% |
-| B. shared-outer | 49.1/51.2/52.6% | 60.2/61.2/63.1% | 50.1/51.6/53.1% | 61.2/62.3/63.5% |
+| A. normal r16 | 54.9/57.3/60.1% | 68.7/69.9/71.8% | 55.8/58.0/60.3% | 69.9/70.5/72.6% |
+| A. normal r32 | 52.7/55.7/59.0% | 66.0/67.6/70.7% | 54.1/56.1/59.3% | 65.7/67.5/70.8% |
+| B. shared-outer r32 | 49.1/51.2/52.6% | 60.2/61.2/63.1% | 50.1/51.6/53.1% | 61.2/62.3/63.5% |
 
 Takeaways:
-- **two-stream is the dominant win**: A +20-25%, B +20-22% over single-stream (both fusion states).
+- **rank**: r16 > r32 > shared-outer (lower rank = lighter LoRA; r16↔r32 gap is small, ~1-3pt).
+- **two-stream is the dominant win**: r16 ~+25%, r32 ~+20%, shared-outer ~+20% over single-stream
+  (both fusion states).
 - **fusion ON vs OFF barely moves the lora cells** (<1pt ratio at fixed stream; fusion's benefit is
   mostly on the no-lora fused-backend path).
 - normal is faster than shared-outer at equal rank (e.g. two+ON bs64: A 8316 vs B 7424) — partly the
