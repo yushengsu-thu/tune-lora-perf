@@ -192,3 +192,21 @@ Findings (launch sanity via dev launch_server, fusion ON):
   timeline (the fused allreduce+rmsnorm replaces the standalone all-reduce + norm kernels).
 - **Decision (user)**: keep fusion ON + the two parser flags as the pack default; mamba flag stays
   out. model.env / target_command.sh / the gb300 e2e runner all synced to this config.
+
+### 6. two-stream ON vs OFF on shared-outer (2026-06-08)
+Isolated the O1-bf16 two-stream contribution: same config (fusion ON, shared-outer, rank 32) with
+the two-stream override DISABLED by clearing LORA_ENVS (no `SGLANG_EXPERIMENTAL_LORA_OPTI` →
+`install_two_stream_overrides` not called → single-stream MoE LoRA dispatch). No side stream means
+the `SGLANG_OPT_LORA_OVERLAP_MAIN_ALLOC` "decode garbage" hazard doesn't apply; decode stayed
+coherent. lora decode tok/s, in=out=2048:
+
+| bs | two-stream OFF | two-stream ON | gain |
+|---|---|---|---|
+| 16 | 1932.3 | 2365.6 | +22.4% |
+| 32 | 3577.2 | 4278.6 | +19.6% |
+| 64 | 6185.9 | 7424.1 | +20.0% |
+
+→ Two-stream is a **+20-22%** decode win on this shared-outer real-adapter path — much larger than
+the +6-8% measured on the earlier non-shared-outer r=16 dummy (the real r=32 + shared-outer LoRA
+delta is heavier, so overlapping the gate_up shrink/expand on the side stream hides more work).
+Both cells coherent.
