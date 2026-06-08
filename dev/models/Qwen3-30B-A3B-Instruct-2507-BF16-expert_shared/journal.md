@@ -68,3 +68,79 @@ to the log entry.
 - New pack `dev/models/Qwen3-30B-A3B-Instruct-2507-BF16-expert_shared/`: model.env (rank 32,
   `--experts-shared-outer-loras`, `LORA_PATH=hf` + LORA_HF_REPO), pod.yaml (copy of base BF16 pack,
   same POD_PREFIX → reuses the running pod), target_command.sh (fixed launch cmd), this journal.
+- Wired the new model's state to the running BF16 pod (`ID=bf16test-20260607`, node 6zvh) and ran
+  `ensure_hf_lora` → adapter_model.safetensors (1.98G) + adapter_config.json + the 22K
+  compare_sample_train_data.pt landed at /data/lora-diff-Qwen3-30B-A3B-Instruct-2507. Pod code
+  already at 526e0ae22 (this task touched only dev/ laptop scripts; no sglang change, no re-upload).
+- Committed stage 1 (tune-lora-perf `a9f6b2b`): ensure_hf_lora + the new pack.
+
+### 2. Verify — launch + coherence + acc (4_run_acc, 2026-06-08) — PASS
+`./4_run_acc.sh Qwen3-30B-A3B-Instruct-2507-BF16-expert_shared`
+(results dir dev/results/.../20260608-130204/acc/)
+- **Launch**: both cells READY, NO FP8 assert / NO illegal memory access — `--experts-shared-outer-loras`
+  serves cleanly on the bf16 experimental_sgl_trtllm path (as predicted: flag is plumbed + dtype-agnostic).
+- **Coherence**: lora + base both coherent ("Paris. The capital of the United States is Washington, D.C. ...").
+- **KL vs vLLM/trainer reference (THE gate)** — bundled compare_sample_train_data.pt, 1820 tokens:
+
+  | pair | KL (0.5·mean((a−b)²)) |
+  |---|---|
+  | orig_sampler (vLLM) vs trainer — noise floor | 0.004243 |
+  | **sglang-lora vs trainer** | **0.005636 ≈ floor** |
+  | sglang-lora vs orig_sampler (vLLM) | 0.005670 ≈ floor |
+
+  → **`--experts-shared-outer-loras` is the CORRECT serving mode for this adapter** — sglang reproduces
+  the vLLM/trainer reference logprobs to within the inherent noise floor. The adapter genuinely IS a
+  shared-outer (expert_dim=1) adapter; serving it with the flag matches the reference.
+- lora-vs-no-lora |diff| table (mean 0.996, EXCEEDS the 0.30 placeholder tol) is EXPECTED: this is a
+  real trained adapter that legitimately diverges from base (not the near-identity alpha mock); the
+  KL-vs-reference table above is the real correctness gate. (ACC_TOL is informational here.)
+
+### 3. Bench — lora vs no-lora (3_run_benchmark, 2026-06-08) — PASS
+`./3_run_benchmark.sh Qwen3-30B-A3B-Instruct-2507-BF16-expert_shared` (bs 16/32/64, in=out=2048):
+
+| cell | bs16 | bs32 | bs64 |
+|---|---|---|---|
+| no-lora decode tok/s | 3782.0 | 6757.8 | 11437.3 |
+| lora decode tok/s | 2314.5 | 4207.6 | 7265.5 |
+| lora ITL ms | 6.91 | 7.61 | 8.81 |
+| lora / no-lora | 61.2% | 62.3% | 63.5% |
+
+- lora cell coherent ("Paris. The capital of the United States is Washington, D.C. ...").
+- This is the real r=32 shared-outer adapter; the two-stream O1-bf16 overlap (SGLANG_EXPERIMENTAL_LORA_OPTI=1)
+  is active. (For reference the earlier non-shared-outer r=16 dummy two-stream run was
+  68.9/70.4/73.2% of ceiling — different adapter/rank/layout, not a like-for-like comparison;
+  the goal's ask was lora-vs-no-lora, captured above.)
+- results dir: dev/results/Qwen3-30B-A3B-Instruct-2507-BF16-expert_shared/20260608-130204/bench/
+
+### 4. gb300 LoRA e2e (2026-06-08) — PASS
+New runner `e2e_test_scripts/gb300/Qwen3-30B-A3B-Instruct-2507-BF16-expert_shared_run_gb300.sh`
+(sibling of the qwen FP8 runner; bf16 base + real adapter + --experts-shared-outer-loras + rank 32,
+allreduce-fusion off, no mamba-strategy, NOCO=1 so it runs on the dev-prepared pod). Deployed the
+model-agnostic helpers (gsm8k_lora.py / bench_report.py / prompts_check.py) + runner to the pod and
+fired detached. HEAD=526e0ae22, backend=experimental_sgl_trtllm, flashinfer=0.6.11.post1.
+
+- **sgl-lora cell**: READY, COHERENT (base + lora).
+  - **gsm8k 5-shot**: base **0.950** (1/200 truncated), **lora 0.940** (2/200 truncated) — the real
+    adapter served with shared-outer ON preserves accuracy (lora ≈ base), consistent with the
+    acc KL ≈ floor result.
+  - bench (in=out=2048, server-log xcheck all OK):
+
+    | bs | base tput | base ITL | lora tput | lora ITL |
+    |---|---|---|---|---|
+    | 16  | 2441.9  | 6.55 | 2317.0  | 6.91 |
+    | 32  | 4396.8  | 7.28 | 4200.2  | 7.62 |
+    | 64  | 7598.6  | 8.42 | 7268.6  | 8.81 |
+    | 128 | 12741.5 | 10.05 | 12258.7 | 10.44 |
+- **nolora cell**: READY, base coherent, gsm8k base **0.950** (matches the sgl-lora cell's base ceiling).
+- The single "Killed" line in run.log is the inter-cell server teardown (kill_all) — harmless; the
+  nolora cell launched READY immediately after.
+
+## Verification summary (all PASS)
+1. Launch (target_command): clean, no FP8 assert / no illegal memory access.
+2. Coherence: lora + base coherent.
+3. acc KL vs vLLM/trainer: 0.0056 ≈ floor 0.0042 → **--experts-shared-outer-loras is the correct
+   serving mode** for this adapter (sglang reproduces the reference logprobs).
+4. bench (lora vs no-lora) bs 16/32/64: lora 61.2/62.3/63.5% of no-lora ceiling.
+5. gb300 e2e: gsm8k base 0.950 / lora 0.940; bench bs16-128 xcheck OK.
+
+No sglang code change was needed — the flag was already supported on the bf16 experimental path.
