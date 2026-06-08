@@ -170,6 +170,8 @@ wait_ready(){
 # Generates the random-init mock adapter at $LORA_PATH on EVERY pod's /data (hostPath is per-node,
 # so each node needs its own copy). Idempotent: gen_dummy_lora.py no-ops if the adapter is present.
 # Runs the generator by piping dev/gen_dummy_lora.py to the pod's python (no file upload needed).
+# We forward LORA_EXTRA as DL_LORA_EXTRA so the generator can auto-detect --experts-shared-outer-loras
+# and emit the 3D shared-outer expert layout when this run uses it (else the default per-expert one).
 ensure_dummy_lora(){
   [ "${LORA_IS_DUMMY:-0}" = 1 ] || return 0
   local P
@@ -177,7 +179,7 @@ ensure_dummy_lora(){
     echo "-- [dummy-lora] ensuring ${LORA_PATH} on ${P}"
     $KC exec -i "$P" -- bash -lc "DL_OUT='${LORA_PATH}' DL_BASE='${MODEL_PATH}' \
         DL_RANK='${DUMMY_LORA_RANK}' DL_ALPHA='${DUMMY_LORA_RANK}' \
-        DL_TARGETS='${DUMMY_LORA_TARGETS}' python3 -" < "${DEV_DIR}/gen_dummy_lora.py" \
+        DL_TARGETS='${DUMMY_LORA_TARGETS}' DL_LORA_EXTRA='${LORA_EXTRA}' python3 -" < "${DEV_DIR}/gen_dummy_lora.py" \
       || { echo "ERROR: dummy LoRA generation failed on ${P}" >&2; return 1; }
   done
 }

@@ -3,7 +3,8 @@
 #    Input : model name (dir under dev/models/ or unique prefix); pods from step 1 running
 #            the code from step 2.
 #    Output: $RUN_DIR/bench/{no-lora,lora}/bs<bs>.{jsonl,log,serverlog} +
-#            $RUN_DIR/bench/summary.md with input/extend tok/s, decode tok/s, ITL, e2e latency.
+#            $RUN_DIR/bench/summary.md: per-cell input/extend tok/s, decode tok/s, ITL, e2e latency,
+#            plus a lora/no-lora ratio table for all three (extend, decode, e2e).
 #    Verify: every bs<bs>.jsonl parses for both cells + a post-load coherence check per cell
 #            (catches '!!!!' decode collapse the numbers can't show).
 . "$(dirname "$0")/common.sh" "${1:-}"
@@ -47,15 +48,20 @@ if missing:
 f = lambda v, fmt="%.1f": (fmt % v) if isinstance(v, (int, float)) else "—"
 L = ["# bench summary — LoRA vs no-LoRA", "",
      "| cell | bs | input/extend tok/s | decode tok/s | ITL ms | e2e s |", "|---|---|---|---|---|---|"]
-dec = {}
+dec, ext, e2e = {}, {}, {}
 for cell, bs, it, ot, itl, lat in rows:
     dec[(cell, bs)] = ot
+    ext[(cell, bs)] = it
+    e2e[(cell, bs)] = lat
     itl = itl if itl else (1000.0 * bs / ot if ot else None)
     L.append(f"| {cell} | {bs} | {f(it)} | {f(ot)} | {f(itl,'%.2f')} | {f(lat,'%.2f')} |")
-L += ["", "| bs | lora decode / no-lora decode |", "|---|---|"]
+ratio = lambda a, b: (("%.1f%%" % (100.0 * a / b)) if (a and b) else "—")
+L += ["", "lora / no-lora ratio  (extend & decode tok/s: higher=faster; e2e latency: higher=slower)",
+      "", "| bs | extend | decode | e2e |", "|---|---|---|---|"]
 for bs in (int(b) for b in bss):
-    a, b = dec.get(("lora", bs)), dec.get(("no-lora", bs))
-    L.append(f"| {bs} | {f(100*a/b,'%.1f')+'%' if a and b else '—'} |")
+    L.append(f"| {bs} | {ratio(ext.get(('lora', bs)), ext.get(('no-lora', bs)))} "
+             f"| {ratio(dec.get(('lora', bs)), dec.get(('no-lora', bs)))} "
+             f"| {ratio(e2e.get(('lora', bs)), e2e.get(('no-lora', bs)))} |")
 out = root / "summary.md"; out.write_text("\n".join(L) + "\n")
 print("\n".join(L)); print(f"\nwrote {out}")
 PY
