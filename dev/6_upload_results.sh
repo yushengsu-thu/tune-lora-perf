@@ -10,7 +10,8 @@ load_state
 
 OWNER=$(gh api user --jq .login)
 REPO="${RESULTS_REPO:-${OWNER}/lora_perf_lora_profile}"
-RUN_TAG="${MODEL}/$(basename "$RUN_DIR")"
+# RESULTS_RUN_NAME overrides the default <MODEL>/<timestamp> path with a flat run name under runs/.
+RUN_TAG="${RESULTS_RUN_NAME:-${MODEL}/$(basename "$RUN_DIR")}"
 echo "== [6/upload] $RUN_DIR  ->  ${REPO}/runs/${RUN_TAG}"
 
 # repo: check / create

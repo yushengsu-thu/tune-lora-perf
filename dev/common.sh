@@ -210,7 +210,10 @@ start_rank(){  # $1=pod $2=node-rank $3=envs $4=flags  (server FOREGROUND in exe
 
 launch_server(){  # $1=lora|no-lora  $2=on|off (cuda-graph; default on)  -> retries once
   local envs="" flags="" graph="${2:-on}" attempt NODE pod
-  if [ "$1" = lora ]; then envs="$LORA_ENVS"; flags="$LORA_EXTRA"; fi
+  # lora cell: LORA_EXTRA + LORA_ENVS. no-lora cell: NOLORA_EXTRA (non-LoRA serving flags the
+  # baseline should share — e.g. --moe-runner-backend experimental_sgl_trtllm — so the no-lora
+  # ceiling uses the same MoE backend and overhead isolates the pure LoRA effect).
+  if [ "$1" = lora ]; then envs="$LORA_ENVS"; flags="$LORA_EXTRA"; else flags="${NOLORA_EXTRA:-}"; fi
   [ "$graph" = off ] && flags="$flags --disable-cuda-graph"   # graph-OFF = kernel-structure profile
   for attempt in 1 2; do
     kill_all
