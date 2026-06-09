@@ -29,7 +29,7 @@ dev/
 │   └── Kimi-K2.5-NVFP4/{model.env,jit-cache/}
 ├── 1_launch_node.sh     # launch pod(s), wait for weights+install, verify GPUs
 ├── 2_upload_code.sh     # push the CURRENT local sglang branch + pip install -e + RESTORE warm cache
-├── 3_run_benchmark.sh   # LoRA vs no-LoRA bench → input/extend, decode, e2e table
+├── 3_run_benchmark.sh   # LoRA vs no-LoRA bench → prefill, decode, e2e table (the required triplet)
 ├── 4_run_acc.sh         # LoRA vs no-LoRA accuracy → per-token logprob diff vs ACC_TOL
 ├── 5_run_profile.sh     # LoRA vs no-LoRA torch profiles (cuda-graph ON+OFF) → <DATE>-<TIME>/{lora,no-lora}/graph_{on,off}/
 ├── 6_upload_results.sh  # push the run dir to github.com/<you>/lora_perf_lora_profile
@@ -111,7 +111,7 @@ each = 6 launches total) — that's the price of standalone, individually-rerunn
 |---|---|
 | input | state; server cells: **no-lora** (stock backend) vs **lora** (`experimental_sgl_trtllm` + the model's required `SGLANG_*` env set, requests routed to the `alpha` adapter) |
 | does | per cell: launch graph-ON server (1 retry; patient cold-JIT wait) → `bench_one_batch_server` with the pack's `BENCH_BS`/`BENCH_IN`/`BENCH_OUT` (currently bs 16/32/64, in=out=2048) → server-log slice → coherence probe → kill |
-| output | `results/<model>/<DATE>-<TIME>/bench/{no-lora,lora}/bs<bs>.{jsonl,log,serverlog}` + `bench/summary.md` — table of **input/extend tok/s, decode tok/s, ITL ms, e2e s** + lora/no-lora decode ratio |
+| output | `results/<model>/<DATE>-<TIME>/bench/{no-lora,lora}/bs<bs>.{jsonl,log,serverlog}` + `bench/summary.md` — table of **prefill tok/s, decode tok/s, ITL ms, e2e s** + a lora/no-lora ratio table for the **full triplet (prefill, decode, e2e)** |
 | verify | every `bs<bs>.jsonl` parses for both cells + per-cell post-load coherence (no `!!!!` decode collapse) |
 
 ### 4. `4_run_acc.sh <model>` — LoRA vs no-LoRA accuracy
@@ -213,6 +213,11 @@ saves the freshly-compiled cache at the end so the next push lands warm.
   `ID=<id> sh -c 'sed "s/\${ID}/$ID/g" ../regression/gb300/models/<model>/pod.yaml | kubectl --context gcp-radixark-02 delete -f - --ignore-not-found'`
   (`<model>` = the dev/models dir name; if the pack overrides `POD_YAML`, delete that yaml
   instead; `<id>` is in `dev/.state/<model>.env`).
+- **Benchmark invariant — always report the prefill / decode / e2e triplet.** Every dev benchmark
+  (`3_run_benchmark.sh`) emits all three in `summary.md`: absolute (prefill tok/s, decode tok/s,
+  e2e s — plus ITL) **and** the lora/no-lora ratio for each. Never reduce a bench to a single phase:
+  decode alone hides prefill/TTFT regressions (and vice-versa), and an optimization is only "proven"
+  when its effect on all three is shown. Keep this triplet when editing the summary or adding models.
 - Decode throughput is the headline number; `bs<bs>.serverlog` keeps the scheduler's own
   `gen throughput` lines as ground truth if a bench number looks suspicious (>5% mismatch ⇒
   rerun — see `../regression/SKILL.md` item 4).

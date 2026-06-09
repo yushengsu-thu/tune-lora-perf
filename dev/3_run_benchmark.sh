@@ -3,8 +3,10 @@
 #    Input : model name (dir under dev/models/ or unique prefix); pods from step 1 running
 #            the code from step 2.
 #    Output: $RUN_DIR/bench/{no-lora,lora}/bs<bs>.{jsonl,log,serverlog} +
-#            $RUN_DIR/bench/summary.md: per-cell input/extend tok/s, decode tok/s, ITL, e2e latency,
-#            plus a lora/no-lora ratio table for all three (extend, decode, e2e).
+#            $RUN_DIR/bench/summary.md: per-cell prefill tok/s, decode tok/s, ITL, e2e latency,
+#            plus a lora/no-lora ratio table for the full triplet (prefill, decode, e2e).
+#    INVARIANT: every dev benchmark reports the prefill / decode / e2e triplet (absolute + ratio).
+#               Do NOT drop any of the three — decode alone hides prefill/TTFT regressions.
 #    Verify: every bs<bs>.jsonl parses for both cells + a post-load coherence check per cell
 #            (catches '!!!!' decode collapse the numbers can't show).
 . "$(dirname "$0")/common.sh" "${1:-}"
@@ -47,7 +49,7 @@ if missing:
     print("ERROR: missing/unparsable bench results:", *missing, sep="\n  "); sys.exit(1)
 f = lambda v, fmt="%.1f": (fmt % v) if isinstance(v, (int, float)) else "—"
 L = ["# bench summary — LoRA vs no-LoRA", "",
-     "| cell | bs | input/extend tok/s | decode tok/s | ITL ms | e2e s |", "|---|---|---|---|---|---|"]
+     "| cell | bs | prefill tok/s | decode tok/s | ITL ms | e2e s |", "|---|---|---|---|---|---|"]
 dec, ext, e2e = {}, {}, {}
 for cell, bs, it, ot, itl, lat in rows:
     dec[(cell, bs)] = ot
@@ -56,8 +58,8 @@ for cell, bs, it, ot, itl, lat in rows:
     itl = itl if itl else (1000.0 * bs / ot if ot else None)
     L.append(f"| {cell} | {bs} | {f(it)} | {f(ot)} | {f(itl,'%.2f')} | {f(lat,'%.2f')} |")
 ratio = lambda a, b: (("%.1f%%" % (100.0 * a / b)) if (a and b) else "—")
-L += ["", "lora / no-lora ratio  (extend & decode tok/s: higher=faster; e2e latency: higher=slower)",
-      "", "| bs | extend | decode | e2e |", "|---|---|---|---|"]
+L += ["", "lora / no-lora ratio  (prefill & decode tok/s: higher=faster; e2e latency: higher=slower)",
+      "", "| bs | prefill | decode | e2e |", "|---|---|---|---|"]
 for bs in (int(b) for b in bss):
     L.append(f"| {bs} | {ratio(ext.get(('lora', bs)), ext.get(('no-lora', bs)))} "
              f"| {ratio(dec.get(('lora', bs)), dec.get(('no-lora', bs)))} "
