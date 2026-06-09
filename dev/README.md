@@ -31,7 +31,7 @@ dev/
 ├── 2_upload_code.sh     # push the CURRENT local sglang branch + pip install -e + RESTORE warm cache
 ├── 3_run_benchmark.sh   # LoRA vs no-LoRA bench → input/extend, decode, e2e table
 ├── 4_run_acc.sh         # LoRA vs no-LoRA accuracy → per-token logprob diff vs ACC_TOL
-├── 5_run_profile.sh     # LoRA vs no-LoRA torch profiles → <DATE>-<TIME>/{lora,no-lora}/
+├── 5_run_profile.sh     # LoRA vs no-LoRA torch profiles (cuda-graph ON+OFF) → <DATE>-<TIME>/{lora,no-lora}/graph_{on,off}/
 ├── 6_upload_results.sh  # push the run dir to github.com/<you>/lora_perf_lora_profile
 ├── 7_broadcast_jit_cache.sh  # (optional) copy this node's JIT cache to ALL GB300 nodes (node→node)
 ├── 8_save_jit_cache.sh  # SAVE the node's compiled JIT cache to dev/models/<m>/jit-cache/ (node→laptop)
@@ -139,9 +139,9 @@ each = 6 launches total) — that's the price of standalone, individually-rerunn
 
 | | |
 |---|---|
-| input | state; the pack's `PROF_RECIPE` (qwen `bs64 start8 steps24`, kimi `bs16 start4 steps12` — clean-decode windows) |
-| does | per cell: launch graph-ON server → `bench_one_batch_server --profile` (CPU+GPU) → pull every `TRACE_RANKS` trace (gzip-verified; multi-node ranks map to pods via `GPUS_PER_NODE`, e.g. kimi ranks 4-7 from the worker pod) |
-| output | `results/<model>/<DATE>-<TIME>/{no-lora,lora}/bs<bs>-TP-<r>.trace.json.gz` (+ `bench.log`) — the `<DATE>-<TIME>` dir holds both cells' profiles, shared with steps 3/4 |
+| input | state; graph-ON `PROF_RECIPE`+`TRACE_RANKS` (qwen `bs64 start8 steps24`, kimi `bs16 start4 steps12` — clean-decode windows) and graph-OFF `PROF_OFF`+`TRACE_RANKS_OFF` (default light `bs16 start4 steps12`, TP0 only) |
+| does | per cell, **both cuda-graph ON and OFF**: launch server (OFF adds `--disable-cuda-graph`) → `bench_one_batch_server --profile` (CPU+GPU) → pull that mode's traces (gzip-verified; multi-node ranks map to pods via `GPUS_PER_NODE`). graph-ON = real timing (all `TRACE_RANKS`); graph-OFF = kernel structure (`TRACE_RANKS_OFF`, usually TP0, ~10x bigger). 4 launches total (2 cells × {on,off}) |
+| output | `results/<model>/<DATE>-<TIME>/{no-lora,lora}/graph_{on,off}/bs<bs>-TP-<r>.trace.json.gz` (+ `bench.log` per mode) — the pair feeds `analyze_llm_torch_profile.py --mapping-input graph_off --formal-input graph_on`; the `<DATE>-<TIME>` dir holds both cells' profiles, shared with steps 3/4 |
 | verify | every expected trace exists locally and passes `gzip -t` |
 
 ### 6. `6_upload_results.sh <model>` — publish

@@ -208,9 +208,10 @@ start_rank(){  # $1=pod $2=node-rank $3=envs $4=flags  (server FOREGROUND in exe
   $KC exec "$1" -- bash -lc "cd /root/sglang && ${ENV_COMMON} $3 exec numactl --membind=0,1 python3 -m sglang.launch_server ${SERVER_COMMON} ${nr} $4 >> /tmp/server.log 2>&1" >/dev/null 2>&1 &
 }
 
-launch_server(){  # $1=lora|no-lora  -> launches graph-ON, retries once
-  local envs="" flags="" attempt NODE pod
+launch_server(){  # $1=lora|no-lora  $2=on|off (cuda-graph; default on)  -> retries once
+  local envs="" flags="" graph="${2:-on}" attempt NODE pod
   if [ "$1" = lora ]; then envs="$LORA_ENVS"; flags="$LORA_EXTRA"; fi
+  [ "$graph" = off ] && flags="$flags --disable-cuda-graph"   # graph-OFF = kernel-structure profile
   for attempt in 1 2; do
     kill_all
     if [ "$NNODES" -gt 1 ]; then
