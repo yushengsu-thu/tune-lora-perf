@@ -207,6 +207,13 @@ saves the freshly-compiled cache at the end so the next push lands warm.
 
 ## Notes
 
+- **Every opt\* ships a single×two matrix.** Per-opt benchmarking + profiling must cover the
+  `{flag off/on} × {single-stream, two-stream}` matrix (not just one stream) — use
+  `dev/bench_profile_matrix.sh <model> <FLAG_NAME> <out-subdir>`. **two-stream is default-on for
+  decode** (`SGLANG_TWO_STREAM_MAX_TOKENS` defaults 256; the patch installs whenever
+  `SGLANG_EXPERIMENTAL_LORA_OPTI=1`), so a single-stream baseline must set
+  `SGLANG_TWO_STREAM_MAX_TOKENS=0`. Upload the matrix (summary + figure + single/two profiles) into
+  each `runs/.../opt*` dir.
 - **Steps are resumable**: each reads `dev/.state/<model>.env`, so you can rerun any single step
   (e.g. iterate `2 → 3` on the same pods after a code change). Step 1 resets the state.
 - **Cleanup** when done:
