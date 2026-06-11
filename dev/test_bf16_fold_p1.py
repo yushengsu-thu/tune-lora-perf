@@ -49,9 +49,13 @@ print(f"correctness: max_rel_err={max_rel:.4e}")
 assert max_rel < 2e-2, "FAIL correctness"
 print("correctness PASS")
 
-# ---- 2) parity bench @ real prefill shapes ----
+# ---- 2) parity bench @ real PER-RANK prefill shapes ----
+# EP4: a 4096-token chunk x topk 8 = 32768 expanded rows GLOBALLY, but each rank owns
+# 32 local experts and processes only its share: ~8192 rows/rank. (The original version
+# of this bench forgot the EP divide -> 4x the real work -> bogus 172us "MISS"; the 57us
+# cubin reference at 32768 rows would imply 3.6 PF/s bf16 = 3x cuBLAS, i.e. impossible.)
 E, K, N, tile = 32, 2048, 1536, 128
-total_expanded = 4096 * 8
+total_expanded = 4096 * 8 // 4  # EP4 per-rank
 base = total_expanded // E
 counts = [base] * E  # uniform routing approximation
 A, W, cnt, out, padded, R = build_case(E, counts, K, N, tile)
