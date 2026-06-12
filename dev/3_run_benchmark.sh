@@ -24,10 +24,16 @@ for CELL in no-lora lora; do
         python -m sglang.bench_one_batch_server --model-path None --base-url http://127.0.0.1:${PORT} \
           --batch-size \${bs} --input-len ${BENCH_IN} --output-len ${BENCH_OUT} ${LA} \
           --show-report --result-filename ${D}/bs\${bs}.jsonl 2>&1 | tee ${D}/bs\${bs}.log
-        tail -n +\$((sl0+1)) /tmp/server.log | tr '\r' '\n' | grep -aE 'Prefill batch|Decode batch' > ${D}/bs\${bs}.serverlog || true
+        tail -n +\$((sl0+1)) /tmp/server.log | tr '\r' '\n' | grep -aE 'gen throughput|Prefill batch|Decode batch' > ${D}/bs\${bs}.serverlog || true
       done" || { echo "ERROR: bench failed ($CELL)"; exit 1; }
   coherence_check "$CELL" || exit 1
   pull_dir "$D" "${RUN_DIR}/bench/${CELL}"
+  # serverlog sanity: bench numbers are occasionally phantoms (see dev/serverlog_sanity.py) —
+  # cross-check every cell against the server's own decode rate BEFORE trusting direction.
+  for bs in ${BENCH_BS}; do
+    echo "  cell ${CELL} bs${bs}:"
+    python3 "${DEV_DIR}/serverlog_sanity.py" "${RUN_DIR}/bench/${CELL}/bs${bs}.jsonl" "${RUN_DIR}/bench/${CELL}/bs${bs}.serverlog" || true
+  done
 done
 kill_all
 
