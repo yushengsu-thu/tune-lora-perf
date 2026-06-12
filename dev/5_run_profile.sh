@@ -10,6 +10,9 @@
 #    Output: $RUN_DIR/  (= dev/results/<model>/<DATE>-<TIME>/, shared with step 3)
 #              ├── no-lora/graph_{on,off}/  bs<bs>-TP-<r>.trace.json.gz  (+ bench.log per mode)
 #              └── lora/   graph_{on,off}/  bs<bs>-TP-<r>.trace.json.gz
+#            Each pulled trace also gets a perfetto-compatible-<name>.trace.json.gz sibling
+#            (overlapping kernel events split onto _hack tracks so Perfetto UI loads them) —
+#            best-effort: a missing dep / convert failure warns but never fails the profile.
 #    Verify: every expected per-rank trace exists locally and passes `gzip -t`.
 . "$(dirname "$0")/common.sh" "${1:-}"
 load_state; ensure_run_dir
@@ -24,6 +27,20 @@ TRACE_RANKS_OFF="${TRACE_RANKS_OFF:-0}"   # TP0 suffices for structure
 prof_mode(){  # $1=on|off
   if [ "$1" = on ]; then read -r P_BS P_START P_STEPS P_OUTLEN <<< "$PROF_RECIPE"; RANKS="$TRACE_RANKS"
   else                   read -r P_BS P_START P_STEPS P_OUTLEN <<< "$PROF_OFF";    RANKS="$TRACE_RANKS_OFF"; fi
+}
+
+# emit a Perfetto-loadable copy next to a freshly-pulled trace. The torch kineto trace puts
+# concurrent GPU kernels on one (pid,tid) which Perfetto rejects as overlapping; the converter
+# bumps each overlapping kernel event to a "<tid>_hack" track. Best-effort only — the raw trace
+# is the primary artifact, so a missing orjson/typer or convert error WARNs but never fails step 5.
+CONV="$(dirname "$0")/convert_to_perfetto_compatible.py"
+perfettoize(){  # $1=dir  $2=trace-basename
+  [ -f "$CONV" ] || { echo "    WARN: $CONV missing — skipped perfetto-compatible copy"; return 0; }
+  if python3 "$CONV" "$2" --dir-data "$1" >/dev/null 2>&1; then
+    echo "    perfetto-compatible-$2 OK"
+  else
+    echo "    WARN: perfetto convert failed for $2 (need: python3 -m pip install orjson typer)"
+  fi
 }
 
 FAIL=0
@@ -53,6 +70,7 @@ for CELL in no-lora lora; do
       if pull_trace "$R" "$D" "${OUT}/bs${P_BS}-TP-${R}.trace.json.gz"; then
         S=$(stat -f%z "${OUT}/bs${P_BS}-TP-${R}.trace.json.gz" 2>/dev/null || echo 0)
         echo "  ${CELL}/graph_${G}/bs${P_BS}-TP-${R}  $((S/1024/1024))M OK"
+        perfettoize "$OUT" "bs${P_BS}-TP-${R}.trace.json.gz"
       else
         # graph-ON is the trace you actually read (hard fail); graph-OFF is best-effort (warn).
         echo "  MISSING ${CELL} graph-${G} TP${R}"; [ "$G" = on ] && FAIL=1
