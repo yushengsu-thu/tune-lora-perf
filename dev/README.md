@@ -85,6 +85,21 @@ sm_103 JIT/autotune — Qwen ~40GB+45min JIT once per node; Kimi ~600GB to ephem
 fp4 autotune ~10-25 min on EVERY launch). Steps 3/4/5 each launch their own servers (2 cells
 each = 6 launches total) — that's the price of standalone, individually-rerunnable steps.
 
+## Sanity tooling (run before/with every opt cycle)
+
+Three layers, in dependency order:
+1. **Measurement trust** — `serverlog_sanity.py` (bench vs server-log decode; auto-run per cell
+   by `bench_profile_matrix.sh`, slice saved as `bs<N>.serverlog`) and `profile_metrics.py`
+   (profiler-derived decode witness; auto-run per pulled trace). A `[SANITY] ... SUSPECT` line
+   means RERUN that cell before reading any direction off it.
+2. **Correctness** — `4_run_acc.sh` (logprob KL), `check_fused_align_equiv.py`, per-cell
+   coherence checks.
+3. **Payoff existence** — `sanity_check_opt.py <trace>` BEFORE starting any kernel optimization:
+   host-bound verdict (idle >40% ⇒ GPU-side opts won't move e2e), e2e ceiling for a planned
+   µs/layer removal vs the ±2% noise floor, and config-bound vs bandwidth-bound kernel triage
+   (actual vs theoretical HBM time; >3× ⇒ fix the launch config, not fusion).
+   Feed it graph-OFF traces; read the PREFILL row (production decode is cuda-graphed).
+
 ## The steps (inputs / outputs)
 
 ### 1. `1_launch_node.sh <model>` — launch the node

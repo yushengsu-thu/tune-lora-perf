@@ -11,6 +11,21 @@
 
 ## ⚠️ 規則（DECODE-THPT-RULE）：跑 benchmark 不能只看 e2e 結果
 禁止只看 bench 的 e2e 匯總數字（throughput / latency 那行）就下結論。**必須同時去看 server log 裡打印出來的 decode throughput（gen/decode token/s）**，確認它跟 e2e 結果一致，並把這個 decode thpt 數字一起記錄到 journal.md / PR description 裡。
+**（已自動化，2026-06-12）**：`dev/bench_profile_matrix.sh` 現在每個 bench cell 自動切 server-log 切片
+（`bs<N>.serverlog`）並跑 `dev/serverlog_sanity.py`（差 >5% 打 SUSPECT 警告）；profile 拉回後自動跑
+`dev/profile_metrics.py` 作獨立見證。看到 `[SANITY] ... SUSPECT` 必須重跑該 cell 再判讀方向。
+
+---
+
+## ⚠️ 規則（OPT-PAYOFF-RULE）：任何 kernel/perf 優化立項前，先跑收益存在性檢查
+動手寫優化之前，先用既有的 graph-OFF trace 跑 `dev/sanity_check_opt.py`：
+1. **host-bound 判定**（PREFILL 行 idle >40% ⇒ GPU 端優化不會動 e2e，只有 host 端工作會）；
+2. **e2e 天花板**（`--remove-us-per-layer X --layers N`，上限低於 ±2% 噪音 ⇒ 不立項）；
+3. **kernel 分診**（`--kernel <name> --bytes <理論流量>`，實測/理論 >3× ⇒ CONFIG-bound，
+   修 launch config（~30 行）而不是融合手術）。
+教訓出處：opt6（−34% act kernel）/opt7（−62% MoE pipeline）兩個 GPU 端優化 e2e 全部歸零
+（prefill 67% GPU-idle、host-bound）；而 permute「180µs」其實是 grid 配錯（理論流量僅 8µs），
+30 行 gather kernel 取代了原計畫的多日 cpasync mainloop 手術。
 ---
 
 ## ⚠️ 規則（ACC-REFERENCE-RULE）：acc 的 reference data 要跟 adapter 種類匹配

@@ -2,6 +2,14 @@
 
 对于 kernel 优化任务：
 
+## 0. 立项前 sanity check（必做，5 分钟，能省几天）
+
+动手前先用既有的 graph-OFF trace 跑 `dev/sanity_check_opt.py <trace> [--remove-us-per-layer X --layers N] [--kernel <name> --bytes <理论字节数>]`，回答三个问题：
+- **该 phase 是不是 host-bound？**（PREFILL idle >40% ⇒ 砍 GPU 时间不会动 e2e，先去做 host 端：graphing / launch 批次化）
+- **计划移除的 GPU 时间换算成 e2e 上限是多少？**（低于 ±2% 噪音底线 ⇒ 不立项，或改立 host 端项目）
+- **目标 kernel 是 CONFIG-bound 还是 bandwidth-bound？**（实测/理论 HBM 时间 >3× ⇒ 是 launch 配置烂，修 grid（~30 行）即可，不需要融合手术）
+实测教训（2026-06-12，bf16 LoRA opt 系列）：opt6/opt7 共 ~1,600 行 GPU 端优化全部过正确性与 kernel gate（−62% kernel time）但 e2e 归零——prefill 67% GPU-idle；而 permute 的 180µs 经分诊是 grid=[8,16,1]/11% 占用率的配置问题（理论流量 8.8µs），30 行 gather kernel 解决。
+
 ## 1. Make a testbed: a script that can bench the kernels w/ correct shapes
 
 ### i. 基于 print 的理解问题：在相关 kernel 处，做充分的 print，理解所有输入输出的 shape、dtype 等信息
