@@ -24,11 +24,19 @@ for VAR in off on; do for ST in single two; do
   coherence_check lora || { echo "ERROR coherence $VAR/$ST"; exit 1; }
   D="/tmp/mx/bench/${VAR}_${ST}"
   kh "rm -rf ${D}; mkdir -p ${D}; cd /root/sglang; for bs in ${BENCH_BS}; do
+        M=\$(wc -l < /tmp/server.log 2>/dev/null || echo 0)
         python -m sglang.bench_one_batch_server --model-path None --base-url http://127.0.0.1:${PORT} \
           --batch-size \${bs} --input-len ${BENCH_IN} --output-len ${BENCH_OUT} ${LA} \
           --show-report --result-filename ${D}/bs\${bs}.jsonl 2>&1 | tail -3
+        tail -n +\$((M+1)) /tmp/server.log 2>/dev/null | grep -E 'gen throughput|Prefill batch|Decode batch' > ${D}/bs\${bs}.serverlog || true
       done" || echo "  WARN: bench $VAR/$ST exec returned nonzero (benign bench-client shutdown) — jsonl validated at summary"
   pull_dir "$D" "${OUT}/bench/${VAR}_${ST}"
+  # serverlog sanity: bench numbers are occasionally phantoms (see dev/serverlog_sanity.py) —
+  # cross-check every cell against the server's own decode rate BEFORE trusting direction.
+  for bs in ${BENCH_BS}; do
+    echo "  cell ${VAR}/${ST} bs${bs}:"
+    python3 "${DEV_DIR}/serverlog_sanity.py" "${OUT}/bench/${VAR}_${ST}/bs${bs}.jsonl" "${OUT}/bench/${VAR}_${ST}/bs${bs}.serverlog" || true
+  done
 done; done
 
 # ---- profile: graph-OFF kernel structure, ON-delta, both streams ----
@@ -45,7 +53,13 @@ for ST in single two; do
         --profile-prefix ${MODEL}_${ST}_on --profile-output-dir ${D} \
         --result-filename ${D}/bench.jsonl 2>&1 | tail -3" || echo "  WARN: prof $ST exec returned nonzero (benign) — pulling trace next"
   mkdir -p "${OUT}/profile/${ST}_on"
-  pull_trace 0 "$D" "${OUT}/profile/${ST}_on/bs16-TP-0.trace.json.gz" && echo "  pulled ${ST}_on" || echo "  WARN pull ${ST}_on"
+  if pull_trace 0 "$D" "${OUT}/profile/${ST}_on/bs16-TP-0.trace.json.gz"; then
+    echo "  pulled ${ST}_on"
+    # independent profiler-derived decode witness (cross-checks bench; best-effort)
+    python3 "${DEV_DIR}/profile_metrics.py" "${OUT}/profile/${ST}_on/bs16-TP-0.trace.json.gz" --steps 12 || true
+  else
+    echo "  WARN pull ${ST}_on"
+  fi
 done
 kill_all
 
