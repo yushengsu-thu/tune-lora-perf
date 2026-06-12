@@ -7,14 +7,22 @@
 # a decode window is unreachable that way. --profile-by-stage sidesteps the counter
 # entirely: it captures N steps of EACH stage and writes *-TP-<r>-<STAGE>.trace.json.gz.
 #
-#   Usage: bash dev/profile_decode_bystage.sh <model> [steps=12]
+#   Usage: bash dev/profile_decode_bystage.sh <model> [steps=12] [stream=two]
+#     stream=single -> lora cell only, SGLANG_TWO_STREAM_MAX_TOKENS=0 (explicit A/B baseline),
+#                      output dir suffix _single. Default (two) = the model.env LORA_ENVS as-is.
 . "$(dirname "$0")/common.sh" "${1:-}"
 load_state; ensure_run_dir
 STEPS="${2:-12}"
+STREAM="${3:-two}"
 OUTROOT=/tmp/dev_bystage
-echo "== [decode-bystage] $MODEL bs=64 steps=${STEPS}/stage -> ${RUN_DIR}/<cell>/graph_on_decode"
+SUFFIX=""; CELLS="no-lora lora"
+if [ "$STREAM" = single ]; then
+  LORA_ENVS="$LORA_ENVS SGLANG_TWO_STREAM_MAX_TOKENS=0"
+  SUFFIX="_single"; CELLS="lora"   # no-lora has no stream dimension
+fi
+echo "== [decode-bystage] $MODEL bs=64 steps=${STEPS}/stage stream=${STREAM} -> ${RUN_DIR}/<cell>/graph_on_decode${SUFFIX}"
 
-for CELL in no-lora lora; do
+for CELL in $CELLS; do
   echo "---- cell: $CELL ----"
   launch_server "$CELL" || { echo "ERROR: $CELL launch failed"; exit 1; }
   LA=""; [ "$CELL" = lora ] && LA="--lora-name ${LORA_NAME}"
@@ -27,7 +35,7 @@ for CELL in no-lora lora; do
         --result-filename ${D}/bench.jsonl 2>&1 | tee ${D}/bench.log" \
     || { echo "ERROR: profile bench failed ($CELL)"; exit 1; }
   coherence_check "$CELL" || exit 1
-  OUT="${RUN_DIR}/${CELL}/graph_on_decode"; mkdir -p "$OUT"
+  OUT="${RUN_DIR}/${CELL}/graph_on_decode${SUFFIX}"; mkdir -p "$OUT"
   # pull only the TP0 DECODE-stage trace (prefill-window traces already exist from 5_run_profile)
   for w in 1 2 3 4 5 6; do
     kh "f=\$(find ${D} -name '*TP-0*DECODE*.trace.json.gz' 2>/dev/null | head -1); [ -n \"\$f\" ] && cat \"\$f\"" \
