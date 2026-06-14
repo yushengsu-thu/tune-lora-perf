@@ -88,3 +88,19 @@ kubectl delete ds sglang-cache-seed --grace-period=0
 ```
 驗證：每個 node `/var/lib/sglang-cache/.../sm100/<hash>/` 應有 8 個 `rank_tp*.json`，**TP8+EP8 兩組都要**。Seed 很小(~0.5MB) —— autotune 結果就是那些 JSON，順手帶 JIT 目錄省重編。
 **zsh 坑**：未加引號的 `$VAR` 不會 word-split → 用 `while read` 迭代 pod，不要 `for p in $PODS`。
+
+---
+
+## ⚠️ 規則（PR-DESC-SYNC-RULE）：改了 code 就要同步 PR #4 的敘述與圖
+只要你改動的 code 會落到 **PR #4**（`qwen3-30b-a3b-2507-bf16` → `trtllm-lora-bf16`，
+<https://github.com/yushengsu-thu/sglang/pull/4>），**push 後必須對應修正 PR #4 的 description**
+（body 錨點 `#issue-4607084295`），讓敘述與圖跟實際 code 一致：
+- **敘述**：`## Summary` / `## Files changed (what & why)` / `## Verification`（GB300 launch/acc/bench 數字）/
+  `## Notes` —— 行為、檔案清單、驗證數字變了就跟著改。
+- **圖**：`## Flow` 裡的 ASCII pipeline 圖（`1) Normal LoRA` 與 `2) Shared-outer (TML) LoRA`，各自的
+  `(A) Single-stream` / `(B) Two-stream`）—— 只要 kernel／管線結構變了（融合、stream 安排、新增或移除
+  kernel、permute/activation/shrink/expand 的順序），這些流程圖要重畫到吻合。
+- **做法**：`gh pr view 4 --json body --jq .body > /tmp/pr4.md` → 編輯 → `gh pr edit 4 --body-file /tmp/pr4.md`。
+- **判斷範圍**：改變**預設管線**（default-on 行為）才要動 Flow 圖；default-OFF／flag-gated 的東西
+  （如 opt6/opt7、opt8 piecewise）在 `## Notes` 註明即可，不必重畫主流程圖。
+教訓：PR description 是這條 bf16 LoRA path 的單一事實來源；code 與敘述／圖一旦不同步，review 跟交接都被誤導。

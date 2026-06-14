@@ -246,3 +246,10 @@ saves the freshly-compiled cache at the end so the next push lands warm.
 - Kimi NVFP4+LoRA had a 4-bug crash chain at the PR merge commit
   (`../e2e_test_scripts/gb300/results/RESULTS.md`) — if the lora cell dies in JIT warmup on your
   branch, that's the first place to look.
+- **Keep PR #4 in sync with the code (PR-DESC-SYNC-RULE, see `../skill.md`).** When a code change
+  lands on the `qwen3-30b-a3b-2507-bf16` → `trtllm-lora-bf16` PR
+  ([#4](https://github.com/yushengsu-thu/sglang/pull/4)), update its description **and** its `## Flow`
+  ASCII pipeline figures to match: prose (Summary / Files changed / Verification / Notes) always;
+  the Flow diagrams whenever the **default** pipeline structure changes (default-OFF/flag-gated work
+  like opt6/opt7/opt8 just gets a Notes line). Edit via
+  `gh pr view 4 --json body --jq .body > /tmp/pr4.md → edit → gh pr edit 4 --body-file /tmp/pr4.md`.
