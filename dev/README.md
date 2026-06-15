@@ -169,7 +169,7 @@ Three layers, in dependency order:
 | | |
 |---|---|
 | input | the run dir from step 3/4/5 state |
-| does | check `github.com/<you>/lora_perf_lora_profile` exists (else `gh repo create` private) → **split**: small artifacts (bench summary/jsonl/serverlog, `gpu_busy_witness` output, bench.log, README) commit to `runs/<model>/<DATE>-<TIME>/`; **all `*.trace.json.gz` (graph-on/off + gpu-only + perfetto) upload as assets to a per-run GitHub Release** (tag `<model>-<DATE>-<TIME>`) — kept OUT of git history so clones stay small. README links the release + the `gh release download` cmd. |
+| does | check `github.com/<you>/lora_perf_lora_profile` exists (else `gh repo create` private) → **split**: small artifacts (bench summary/jsonl/serverlog, `gpu_busy_witness` output, bench.log, README) commit to `runs/<model>/<DATE>-<TIME>/`; **all `*.trace.json.gz` (graph-on/off + gpu-only + perfetto) upload as assets to a per-run GitHub Release** (tag `<model>-<DATE>-<TIME>`) — kept OUT of git history so clones stay small. README links the release + the `gh release download` cmd. **The profile dir layout is preserved**: each dir that held traces (`<cell>/graph_<mode>/`, `gpuonly`) keeps a `README.md` pointing to the release (so the path stays navigable, not vanished). |
 | output | repo `…/tree/main/runs/<model>/<DATE>-<TIME>` (small artifacts) + release `…/releases/tag/<model>-<DATE>-<TIME>` (traces) |
 | verify | repo path readable via API **AND** the release has ≥ all trace assets. **profile upload is mandatory** — traces MUST land in the release (errors otherwise; never skip the profile on a flaky uplink — the pod pull already retries). |
 

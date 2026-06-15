@@ -116,5 +116,10 @@ torch profiler 的 `*.trace.json.gz`（graph-on/off + gpu-only + perfetto，每�
 - `6_upload_results.sh` 已自動做這個切分。**profile 上傳是強制的**：trace 一定要進 release，
   網路截斷就重試(pod pull 本來就會retry)，**不可略過 profile**。
 - 資產命名 `cell__graph_mode__file`（路徑斜線→`__`，扁平且唯一）。
+- **profile 目錄結構要保留成 README stub**：每個原本放 trace 的目錄（`<cell>/graph_<mode>/`、
+  `gpuonly`）在 repo 裡仍然存在,但裡面放一個 `README.md` 指向 release(列出該目錄原本的 trace
+  對應到哪些 release 資產 + `gh release download` 指令)。**目錄不可因為檔案搬走就消失**——這樣在
+  `runs/<model>/<DATE-TIME>/current_base_lora/lora/graph_on/` 瀏覽時仍找得到 trace 的去向。
+  `6_upload_results.sh` 已自動寫這些 stub。
 教訓：~92 MB 的 graph-on trace 直接 commit 進 repo,history 會被永久撐大;release 資產存在 git 之外,
 clone 不受影響——這是「省空間」的正解,不是 git-LFS(配額/頻寬更糟)。

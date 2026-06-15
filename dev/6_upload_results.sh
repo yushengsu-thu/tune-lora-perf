@@ -46,6 +46,27 @@ while IFS= read -r f; do
   mkdir -p "$DST/$(dirname "$rel")"; cp "$f" "$DST/$rel"
 done < <(find "$RUN_DIR" -type f)
 
+# Preserve the profile-trace directory LAYOUT in the repo: every dir that held *.trace.json.gz keeps
+# a README.md pointing to the release (the traces themselves are release assets). So browsing the
+# repo at e.g. .../current_base_lora/lora/graph_on/ still lands you on a pointer to the traces,
+# instead of the dir silently vanishing because its only files moved to the release.
+if [ ${#TRACES[@]} -gt 0 ]; then
+  for d in $(for t in "${TRACES[@]}"; do rel="${t#"$RUN_DIR"/}"; echo "${rel%/*}"; done | sort -u); do
+    mkdir -p "$DST/$d"
+    { echo "# profile traces — in the GitHub Release (not committed to the repo)"
+      echo "The \`*.trace.json.gz\` that profiling wrote in this directory were uploaded to this run's"
+      echo "GitHub Release to keep the repo small; this directory is preserved as a pointer to them."
+      echo
+      echo "- release: <${REL_URL}>"
+      echo "- download all traces for this run: \`gh release download ${REL_TAG} -R ${REPO} -D ./traces\`"
+      echo "- assets originally written in \`${d}/\` (release asset name  <-  original filename):"
+      for t in "${TRACES[@]}"; do rel="${t#"$RUN_DIR"/}"
+        [ "${rel%/*}" = "$d" ] && echo "  - \`${rel//\//__}\`  <-  \`${rel##*/}\`"
+      done
+    } > "$DST/$d/README.md"
+  done
+fi
+
 { echo "# ${RUN_TAG}"
   echo "- model: ${MODEL}  pods ID: ${ID}"
   echo "- uploaded: $(date '+%Y-%m-%d %H:%M:%S %Z')"
@@ -56,6 +77,8 @@ done < <(find "$RUN_DIR" -type f)
   echo '  ```'
   echo "  gh release download ${REL_TAG} -R ${REPO} -D ./traces"
   echo '  ```'
+  echo "- the profile directories below (\`<cell>/graph_<mode>/\`, \`gpuonly\`) are preserved as"
+  echo "  README pointers to this release — the trace files themselves live only in the release."
   if [ ${#TRACES[@]} -gt 0 ]; then
     echo "- ${#TRACES[@]} trace asset(s) (named \`cell__graph_mode__file\`):"
     for t in "${TRACES[@]}"; do echo "  - \`${t#"$RUN_DIR"/}\`"; done
