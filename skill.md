@@ -123,3 +123,20 @@ torch profiler 的 `*.trace.json.gz`（graph-on/off + gpu-only + perfetto，每�
   `6_upload_results.sh` 已自動寫這些 stub。
 教訓：~92 MB 的 graph-on trace 直接 commit 進 repo,history 會被永久撐大;release 資產存在 git 之外,
 clone 不受影響——這是「省空間」的正解,不是 git-LFS(配額/頻寬更糟)。
+
+---
+
+## ⚠️ 規則（REPO-HYGIENE-RULE）：一次性 script 不留在 repo
+為某次 debug / 某個 opt 的 A-B / 某次 setting 跑而寫的**一次性 script** 不留在 repo —— 結論進
+`journal.md` / PR description，script 本身用完即刪（git history 仍可還原）。
+- **不留**：`diag_*`（卡住/recompile/stream 診斷）、`probe_*`（cubin/piecewise 探測）、`exp_*`
+  （numa/capture 實驗）、opt 專屬 A-B（`bench_opt<N>_ab` / `profile_opt<N>_*` / `profile_matrix` /
+  `bench_3way` / `reprofile_*` / `profile_base_lora` / `profile_decode_bystage`）、單次 profile dump
+  的 `.md`（`*_kernel_shapes_*` / `*_profile_graphon_*`）。
+- **canonical harness（留）**：`dev/` 的 `1_`–`8_` 編號流程 + `run_all.sh` + `common.sh` /
+  `jit_store.sh` / `jit_fp.cmd`；**唯一**的 per-opt 量測入口 `dev/bench_profile_matrix.sh`；sanity 三件套
+  `sanity_check_opt.py` / `serverlog_sanity.py` / `profile_metrics.py`（+ `check_fused_align_equiv.py`）；
+  `gpu_busy_witness.py`、`convert_to_perfetto_compatible.py`（5_run_profile 依賴）；`acc_*_capture.py`、
+  `gen_dummy_lora.*`。
+- **opt 專屬 parity test**（如 `test_bf16_*`）是可重跑的驗證、且被對應 PR 引用 → **保留**，但要綁定該 PR/journal，別變孤兒。
+教訓：dev/ 曾累積 ~20 個一次性 diag/probe/opt-A-B script 與 canonical 流程混在一起，交接時分不清哪個是真入口。
