@@ -104,3 +104,17 @@ kubectl delete ds sglang-cache-seed --grace-period=0
 - **判斷範圍**：改變**預設管線**（default-on 行為）才要動 Flow 圖；default-OFF／flag-gated 的東西
   （如 opt6/opt7、opt8 piecewise）在 `## Notes` 註明即可，不必重畫主流程圖。
 教訓：PR description 是這條 bf16 LoRA path 的單一事實來源；code 與敘述／圖一旦不同步，review 跟交接都被誤導。
+
+---
+
+## ⚠️ 規則（PROFILE-RELEASE-RULE）：profile trace 一律進 GitHub Release，且必須上傳
+torch profiler 的 `*.trace.json.gz`（graph-on/off + gpu-only + perfetto，每份 ~數十 MB、一輪 8-rank
+可達 ~1 GB）**不進 git repo**（會永久膨脹每個 clone），而是上傳成該 run 的 **GitHub Release 資產**
+（tag `<model>-<DATE-TIME>`，repo `yushengsu-thu/lora_perf_lora_profile`，2 GiB/檔上限）。
+- repo 的 `runs/<model>/<DATE-TIME>/` 只放**小檔**：bench summary/jsonl/serverlog、`gpu_busy_witness`
+  輸出、bench.log、README（README 內含 release 連結 + `gh release download <tag> -R <repo>` 指令）。
+- `6_upload_results.sh` 已自動做這個切分。**profile 上傳是強制的**：trace 一定要進 release，
+  網路截斷就重試(pod pull 本來就會retry)，**不可略過 profile**。
+- 資產命名 `cell__graph_mode__file`（路徑斜線→`__`，扁平且唯一）。
+教訓：~92 MB 的 graph-on trace 直接 commit 進 repo,history 會被永久撐大;release 資產存在 git 之外,
+clone 不受影響——這是「省空間」的正解,不是 git-LFS(配額/頻寬更糟)。
