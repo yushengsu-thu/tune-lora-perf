@@ -99,6 +99,11 @@ Three layers, in dependency order:
    µs/layer removal vs the ±2% noise floor, and config-bound vs bandwidth-bound kernel triage
    (actual vs theoretical HBM time; >3× ⇒ fix the launch config, not fusion).
    Feed it graph-OFF traces; read the PREFILL row (production decode is cuda-graphed).
+4. **GPU-busy witness** — `gpu_busy_witness.py <gpuonly-trace>` (auto-run by `5_run_profile.sh`,
+   which now captures a GPU-only `--profile-activities GPU` trace per cell+mode →
+   `bs<bs>-TP-0.gpuonly.trace.json.gz`). Reports GPU-active% (kernel time / span) as a direct,
+   independent confirmation that the GPU is busy (≥85% GPU-bound) vs host-bound (idle gaps between
+   launches). Cross-checks layer 3's wall-vs-GPU-busy idle ratio from a clean GPU-only timeline.
 
 ## The steps (inputs / outputs)
 

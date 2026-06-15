@@ -10,6 +10,9 @@
 #    Output: $RUN_DIR/  (= dev/results/<model>/<DATE>-<TIME>/, shared with step 3)
 #              ├── no-lora/graph_{on,off}/  bs<bs>-TP-<r>.trace.json.gz  (+ bench.log per mode)
 #              └── lora/   graph_{on,off}/  bs<bs>-TP-<r>.trace.json.gz
+#            Plus a GPU-only profile (`--profile-activities GPU`) per cell+mode →
+#            bs<bs>-TP-0.gpuonly.trace.json.gz, auto-run through gpu_busy_witness.py: a direct
+#            GPU-active% witness (busy vs host-bound), independent of sanity_check_opt's idle ratio.
 #            Each pulled trace also gets a perfetto-compatible-<name>.trace.json.gz sibling
 #            (overlapping kernel events split onto _hack tracks so Perfetto UI loads them) —
 #            best-effort: a missing dep / convert failure warns but never fails the profile.
@@ -76,6 +79,21 @@ for CELL in no-lora lora; do
         echo "  MISSING ${CELL} graph-${G} TP${R}"; [ "$G" = on ] && FAIL=1
       fi
     done
+    # GPU-busy witness: one extra GPU-ONLY profile (--profile-activities GPU, no CPU side) on the
+    # same up server, to confirm the GPU is actually busy vs host-bound. gpu_busy_witness.py reports
+    # GPU-active fraction (kernel time / span). Fully best-effort — a failure WARNs, never fails step 5.
+    GD="${OUTROOT}/${CELL}/graph_${G}/gpuonly"
+    if kh "rm -rf ${GD}; mkdir -p ${GD}; cd /root/sglang; \
+        python -m sglang.bench_one_batch_server --model-path None --base-url http://127.0.0.1:${PORT} \
+          --batch-size ${P_BS} --input-len ${BENCH_IN} --output-len ${P_OUTLEN} ${LA} \
+          --profile --profile-activities GPU --profile-start-step ${P_START} --profile-steps ${P_STEPS} \
+          --profile-prefix ${MODEL}_${CELL}_gpuonly_graph_${G}_bs${P_BS} --profile-output-dir ${GD} \
+          --result-filename ${GD}/bench.jsonl 2>&1 | tail -1" >/dev/null 2>&1; then
+      if pull_trace 0 "${GD}" "${OUT}/bs${P_BS}-TP-0.gpuonly.trace.json.gz"; then
+        echo "  ${CELL}/graph_${G} GPU-only busy witness:"
+        python3 "${DEV_DIR}/gpu_busy_witness.py" "${OUT}/bs${P_BS}-TP-0.gpuonly.trace.json.gz" || true
+      else echo "  WARN: ${CELL}/graph_${G} gpu-only trace pull failed (witness skipped, non-fatal)"; fi
+    else echo "  WARN: ${CELL}/graph_${G} gpu-only profile bench failed (witness skipped, non-fatal)"; fi
     kh "cat ${D}/bench.log" > "${OUT}/bench.log" 2>/dev/null || true
   done
 done
